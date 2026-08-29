@@ -1,0 +1,3067 @@
+# PostHog CI — continuation stage.
+#
+# The setup stage (.circleci/config.yml) computes every path filter once and
+# passes the results in as the pipeline parameters below. Each parameter gates
+# one whole workflow, because CircleCI has no per-job `when` inside a workflow
+# the way GitHub Actions has `if: needs.changes.outputs.x == 'true'`.
+#
+# Parameter names here must match what
+# .circleci/scripts/compute-pipeline-parameters.py emits, exactly. The
+# continuation API rejects a parameter the target config does not declare, and
+# a parameter declared here but never emitted silently keeps its default.
+#
+# Environment this config expects to be configured in the CircleCI project:
+#   DOCKERHUB_USER, DOCKERHUB_TOKEN   pull-rate limits on the compose stack
+#   TRUNK_API_TOKEN                   flaky-test upload (non-gating)
+#   TRUNK_UPLOAD_ENABLED              kill-switch, "true" to upload
+#   NPM_TOKEN                         only read by publish jobs, none of which
+#                                     are ported here
+# Everything else the jobs read is set in this file, in `environment` blocks.
+
+version: 2.1
+
+parameters:
+    run-actionlint: { type: boolean, default: false }
+    run-agent-proxy: { type: boolean, default: false }
+    run-agent-skills: { type: boolean, default: false }
+    run-backend: { type: boolean, default: false }
+    run-backend-shadow-drift: { type: boolean, default: false }
+    run-cli: { type: boolean, default: false }
+    run-clickhouse-hcl: { type: boolean, default: false }
+    run-clickhouse-multinode: { type: boolean, default: false }
+    run-container-build: { type: boolean, default: false }
+    run-dagster: { type: boolean, default: false }
+    run-deltalite-python: { type: boolean, default: false }
+    run-desktop-code: { type: boolean, default: false }
+    run-desktop-packages: { type: boolean, default: false }
+    run-desktop-quality: { type: boolean, default: false }
+    run-dev-sandbox-selftest: { type: boolean, default: false }
+    run-dev-setup: { type: boolean, default: false }
+    run-dockerfile-lint: { type: boolean, default: false }
+    run-dockerignore-guard: { type: boolean, default: false }
+    run-e2e: { type: boolean, default: false }
+    run-frontend: { type: boolean, default: false }
+    run-frontend-code: { type: boolean, default: false }
+    run-hobby-installer: { type: boolean, default: false }
+    run-hog: { type: boolean, default: false }
+    run-integration-service: { type: boolean, default: false }
+    run-lint-workflows: { type: boolean, default: false }
+    run-livestream: { type: boolean, default: false }
+    run-livestream-tui: { type: boolean, default: false }
+    run-llm-gateway: { type: boolean, default: false }
+    run-mcp: { type: boolean, default: false }
+    run-mcp-ui-apps: { type: boolean, default: false }
+    run-migrations: { type: boolean, default: false }
+    run-nodejs: { type: boolean, default: false }
+    run-nodejs-container: { type: boolean, default: false }
+    run-oauth-proxy: { type: boolean, default: false }
+    run-openapi-codegen: { type: boolean, default: false }
+    run-openapi-types: { type: boolean, default: false }
+    run-paths-filter-action: { type: boolean, default: false }
+    run-phrocs: { type: boolean, default: false }
+    run-product-yamls: { type: boolean, default: false }
+    run-proto: { type: boolean, default: false }
+    run-python: { type: boolean, default: false }
+    run-replay-shared: { type: boolean, default: false }
+    run-rust: { type: boolean, default: false }
+    run-rust-flags-integration: { type: boolean, default: false }
+    run-scripts-tests: { type: boolean, default: false }
+    run-semgrep-desktop: { type: boolean, default: false }
+    run-semgrep-devex: { type: boolean, default: false }
+    run-semgrep-general: { type: boolean, default: false }
+    run-semgrep-go: { type: boolean, default: false }
+    run-semgrep-js: { type: boolean, default: false }
+    run-semgrep-products-frontend: { type: boolean, default: false }
+    run-semgrep-python: { type: boolean, default: false }
+    run-semgrep-rust: { type: boolean, default: false }
+    run-semgrep-test-rules: { type: boolean, default: false }
+    run-storybook: { type: boolean, default: false }
+    run-survey-sdk-check: { type: boolean, default: false }
+    run-terragrunt: { type: boolean, default: false }
+    run-test-quarantine: { type: boolean, default: false }
+
+    # Non-boolean parameters the setup stage computes.
+    changed-file-count:
+        type: integer
+        default: 0
+    selected-jest-paths-b64:
+        # Base64 of the newline-joined frontend sources jest should narrow to,
+        # empty for a full run. Base64 because CircleCI substitutes a string
+        # parameter into a `run` command as raw text, so a bare path list would
+        # be re-parsed by the shell.
+        type: string
+        default: ''
+
+# --------------------------------------------------------------------------- #
+# Executors
+# --------------------------------------------------------------------------- #
+
+executors:
+    python:
+        docker:
+            - image: cimg/python:3.13.13
+        resource_class: large
+        environment:
+            UV_VERSION: 0.11.28
+
+    python-node:
+        docker:
+            - image: cimg/python:3.13.13-node
+        resource_class: large
+        environment:
+            UV_VERSION: 0.11.28
+
+    node:
+        docker:
+            - image: cimg/node:24.13.0
+        resource_class: large
+
+    node-xlarge:
+        docker:
+            - image: cimg/node:24.13.0
+        resource_class: xlarge
+
+    rust:
+        docker:
+            - image: cimg/rust:1.91.1
+        resource_class: xlarge
+
+    go:
+        docker:
+            - image: cimg/go:1.25.5
+        resource_class: medium
+
+    # Anything that needs the docker-compose dev stack, a Docker daemon, or
+    # /etc/hosts edits. The source workflows run these on Depot Ubuntu runners
+    # with a full Docker daemon, which a CircleCI docker executor cannot give.
+    linux-machine:
+        machine:
+            image: ubuntu-2404:current
+            docker_layer_caching: true
+        resource_class: large
+
+    linux-machine-xlarge:
+        machine:
+            image: ubuntu-2404:current
+            docker_layer_caching: true
+        resource_class: xlarge
+
+    macos:
+        macos:
+            xcode: 16.2.0
+        resource_class: macos.m1.medium.gen1
+
+# --------------------------------------------------------------------------- #
+# Reusable commands
+# --------------------------------------------------------------------------- #
+
+commands:
+    setup-uv:
+        description: Install uv and sync the Python project, matching ci-python.yml.
+        parameters:
+            extra-args:
+                type: string
+                default: '--frozen --dev'
+        steps:
+            - run:
+                  name: Install uv
+                  command: |
+                      curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh
+                      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+            - run:
+                  name: Check uv and Python version compatibility
+                  command: python3 bin/check_uv_python_compatibility.py
+            - restore_cache:
+                  keys:
+                      - uv-v1-{{ arch }}-{{ checksum "uv.lock" }}
+                      - uv-v1-{{ arch }}-
+            - run:
+                  name: Install SAML (python3-saml) dependencies
+                  command: |
+                      sudo apt-get update
+                      sudo apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
+            - run:
+                  name: Install Python dependencies
+                  command: uv sync << parameters.extra-args >>
+            - save_cache:
+                  key: uv-v1-{{ arch }}-{{ checksum "uv.lock" }}
+                  paths:
+                      - ~/.cache/uv
+
+    pnpm-install:
+        description: >
+            Install pnpm workspace dependencies. Replaces
+            .github/actions/pnpm-install, whose GitHub App token minting has no
+            CircleCI equivalent and is not needed here.
+        parameters:
+            install-command:
+                type: string
+                default: 'pnpm install --frozen-lockfile'
+            cache-key-suffix:
+                type: string
+                default: 'default'
+        steps:
+            - run:
+                  name: Activate pnpm
+                  command: |
+                      corepack enable
+                      corepack prepare pnpm@10.29.3 --activate
+                      pnpm --version
+            - run:
+                  name: Get pnpm store path
+                  command: echo "export PNPM_STORE=$(pnpm store path --silent)" >> "$BASH_ENV"
+            - restore_cache:
+                  keys:
+                      - pnpm-v1-<< parameters.cache-key-suffix >>-{{ checksum "pnpm-lock.yaml" }}
+                      - pnpm-v1-<< parameters.cache-key-suffix >>-
+            - run:
+                  name: Install pnpm dependencies
+                  command: << parameters.install-command >>
+            - save_cache:
+                  key: pnpm-v1-<< parameters.cache-key-suffix >>-{{ checksum "pnpm-lock.yaml" }}
+                  paths:
+                      - ~/.local/share/pnpm/store
+                      - ~/.cache/pnpm
+
+    install-rust:
+        parameters:
+            toolchain:
+                type: string
+                default: '1.91.1'
+            components:
+                type: string
+                default: ''
+        steps:
+            - run:
+                  name: Install rust << parameters.toolchain >>
+                  command: |
+                      rustup toolchain install << parameters.toolchain >> --profile minimal
+                      rustup default << parameters.toolchain >>
+                      rustc --version
+            - when:
+                  condition: << parameters.components >>
+                  steps:
+                      - run:
+                            name: Add rustup components
+                            command: rustup component add << parameters.components >>
+            - restore_cache:
+                  keys:
+                      - cargo-v1-{{ arch }}-{{ checksum "rust/Cargo.lock" }}
+                      - cargo-v1-{{ arch }}-
+
+    save-cargo-cache:
+        steps:
+            - save_cache:
+                  key: cargo-v1-{{ arch }}-{{ checksum "rust/Cargo.lock" }}
+                  paths:
+                      - ~/.cargo/registry
+                      - ~/.cargo/git
+                      - rust/target
+
+    start-dev-stack:
+        description: >
+            Bring up the docker-compose dev stack the way ci-backend.yml does,
+            then wait for it. `bin/ci-wait-for-docker` is the repo's own helper.
+        parameters:
+            services:
+                type: string
+                default: ''
+        steps:
+            - run:
+                  name: Log in to Docker Hub
+                  command: |
+                      if [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+                          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin
+                      else
+                          echo "No DOCKERHUB_TOKEN set — pulling anonymously, subject to rate limits"
+                      fi
+            - run:
+                  name: Clean up data directories with container permissions
+                  command: |
+                      [ -d "data" ] && docker run --rm -v "$(pwd)/data:/data" alpine sh -c "rm -rf /data/seaweedfs /data/minio" || true
+            - run:
+                  name: Add service hostnames to /etc/hosts
+                  command: |
+                      echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+            # `services` is known when the config compiles, so the narrow and
+            # full-stack forms are separate when/unless blocks. A runtime
+            # `if [ -n "..." ]` on the substituted literal is SC2157.
+            - when:
+                  condition: << parameters.services >>
+                  steps:
+                      - run:
+                            name: Start the stack with Docker Compose
+                            command: bin/ci-wait-for-docker launch --background --down << parameters.services >>
+                      - run:
+                            name: Wait for Docker services
+                            command: bin/ci-wait-for-docker wait --only << parameters.services >>
+            - unless:
+                  condition: << parameters.services >>
+                  steps:
+                      - run:
+                            name: Start the stack with Docker Compose
+                            command: bin/ci-wait-for-docker launch --background --down-all-profiles
+                      - run:
+                            name: Wait for Docker services
+                            command: bin/ci-wait-for-docker wait
+
+    dump-compose-logs:
+        steps:
+            - run:
+                  name: Show docker compose logs on failure
+                  when: on_fail
+                  command: docker compose -f docker-compose.dev.yml logs --tail=400
+
+    collect-junit:
+        description: >
+            Store JUnit XML and hand the same files to Trunk. The upload is
+            best-effort — a Trunk outage must not red a job — which matches the
+            `continue-on-error: true` on the source uploader steps.
+        parameters:
+            path:
+                type: string
+                default: 'junit-results'
+        steps:
+            - store_test_results:
+                  path: << parameters.path >>
+            - store_artifacts:
+                  path: << parameters.path >>
+                  destination: junit
+            - run:
+                  name: Upload test results to Trunk
+                  when: always
+                  command: |
+                      set +e
+                      if [ "${TRUNK_UPLOAD_ENABLED:-}" != "true" ] || [ -z "${TRUNK_API_TOKEN:-}" ]; then
+                          echo "Trunk upload disabled or unconfigured — skipping"
+                          exit 0
+                      fi
+                      curl -fsSL https://trunk.io/releases/analytics-cli/latest/x86_64-unknown-linux/trunk-analytics-cli \
+                          -o /tmp/trunk-analytics-cli && chmod +x /tmp/trunk-analytics-cli || exit 0
+                      /tmp/trunk-analytics-cli upload \
+                          --junit-paths "<< parameters.path >>/junit-*.xml" \
+                          --org-url-slug posthog-inc \
+                          --token "$TRUNK_API_TOKEN" || echo "Trunk upload failed — not gating"
+
+    install-golangci-lint:
+        description: >
+            Install golangci-lint on PATH. The source workflows use
+            golangci/golangci-lint-action with version "latest"; this pins a
+            version so a new release cannot red an unrelated PR.
+        parameters:
+            version:
+                type: string
+                default: 'v1.64.5'
+        steps:
+            - run:
+                  name: Install golangci-lint << parameters.version >>
+                  command: |
+                      curl -sSfL --retry 3 \
+                          https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
+                          | sh -s -- -b "$(go env GOPATH)/bin" << parameters.version >>
+                      echo "export PATH=\"$(go env GOPATH)/bin:\$PATH\"" >> "$BASH_ENV"
+                      "$(go env GOPATH)/bin/golangci-lint" --version
+
+    semgrep-scan:
+        description: One containerised semgrep pass, mirroring .github/actions/semgrep-ci.
+        parameters:
+            args:
+                type: string
+            severity:
+                type: string
+                default: ''
+        steps:
+            - when:
+                  condition: << parameters.severity >>
+                  steps:
+                      - run:
+                            name: Run semgrep (severity << parameters.severity >>)
+                            command: |
+                                docker run --rm -v "$PWD:/src" -w /src \
+                                    -e SEMGREP_ENABLE_VERSION_CHECK=false \
+                                    "$SEMGREP_IMAGE" \
+                                    semgrep --error --metrics=off --severity=<< parameters.severity >> << parameters.args >>
+            - unless:
+                  condition: << parameters.severity >>
+                  steps:
+                      - run:
+                            name: Run semgrep
+                            command: |
+                                docker run --rm -v "$PWD:/src" -w /src \
+                                    -e SEMGREP_ENABLE_VERSION_CHECK=false \
+                                    "$SEMGREP_IMAGE" \
+                                    semgrep --error --metrics=off << parameters.args >>
+
+# --------------------------------------------------------------------------- #
+# Jobs
+# --------------------------------------------------------------------------- #
+
+jobs:
+    # --- always-on -------------------------------------------------------- #
+
+    shellcheck:
+        # Source: shellcheck.yml / shell_check. Unconditional on every PR.
+        docker:
+            - image: cimg/base:current
+        resource_class: small
+        steps:
+            - checkout
+            - run:
+                  name: Install shellcheck
+                  command: |
+                      if command -v shellcheck >/dev/null; then
+                          shellcheck --version
+                          exit 0
+                      fi
+                      sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
+                      sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y shellcheck
+            - run:
+                  name: Check secrets scripts
+                  command: cd bin && shellcheck deploy-hobby
+            - run:
+                  name: Check Windows-compatible repository paths
+                  command: |
+                      shellcheck .github/scripts/check-windows-paths.sh .github/scripts/check-windows-paths.test.sh
+                      .github/scripts/check-windows-paths.test.sh
+                      .github/scripts/check-windows-paths.sh
+            - run:
+                  name: Check desktop backend coupling script
+                  command: |
+                      shellcheck .github/scripts/desktop/*.sh
+                      .github/scripts/desktop/check-pr-backend-coupling.test.sh
+            - run:
+                  name: Check AGENTS.md / CLAUDE.md symlinks
+                  command: |
+                      shellcheck .github/scripts/check-agents-md-symlinks.sh
+                      .github/scripts/check-agents-md-symlinks.sh
+            - run:
+                  name: Check the CircleCI helper scripts
+                  # New surface: this config ships its own scripts, and nothing
+                  # else in the repo lints them.
+                  command: |
+                      if compgen -G '.circleci/scripts/*.sh' > /dev/null; then
+                          shellcheck .circleci/scripts/*.sh
+                      else
+                          echo "No shell scripts under .circleci/scripts"
+                      fi
+
+    ci-complete:
+        # Terminal aggregator. Every gated workflow is optional, so without an
+        # always-on workflow a pipeline whose filters all miss would contain no
+        # workflows at all, which CircleCI rejects at continuation time.
+        docker:
+            - image: cimg/base:current
+        resource_class: small
+        steps:
+            - run:
+                  name: Report the selection
+                  command: |
+                      echo "Changed files: << pipeline.parameters.changed-file-count >>"
+                      echo "All selected checks completed."
+
+    # --- python ------------------------------------------------------------ #
+
+    python-code-quality:
+        # Source: ci-python.yml / code-quality
+        executor: python-node
+        parallelism: 1
+        steps:
+            - checkout
+            - setup-uv
+            - run:
+                  name: Download GeoIP database
+                  command: ./bin/download-mmdb
+            - run:
+                  name: Check ty type checking
+                  command: uv run ty check
+            - restore_cache:
+                  keys:
+                      - mypy-v2-{{ checksum "pyproject.toml" }}
+                      - mypy-v2-
+            - run:
+                  name: Check static typing
+                  environment:
+                      MYPY_NUM_WORKERS: '2'
+                  command: uv run mypy --version && uv run mypy --cache-fine-grained .
+            - save_cache:
+                  key: mypy-v2-{{ checksum "pyproject.toml" }}
+                  paths:
+                      - .mypy_cache
+            - run:
+                  name: Check if "schema.py" is up to date
+                  command: npm run schema:build:python && git diff --exit-code
+            - run:
+                  name: Check for syntax errors, import sort, and code style violations
+                  command: uv run ruff check .
+            - run:
+                  name: Check formatting
+                  command: uv run ruff format --check --diff .
+            - run:
+                  name: Check hogli manifest completeness
+                  command: ./bin/hogli meta:check
+            - run:
+                  name: Run hogli framework tests
+                  command: mkdir -p junit-results && uv run pytest tools/hogli/tests -v --junitxml=junit-results/junit-hogli.xml
+            - run:
+                  name: Run hogli extension tests
+                  command: uv run pytest tools/hogli-commands/hogli_commands/tests -v --junitxml=junit-results/junit-hogli-commands.xml
+            - run:
+                  name: Run owners resolver tests
+                  command: uv run pytest tools/owners/tests -v --junitxml=junit-results/junit-owners.xml
+            - run:
+                  name: Run query-performance-ai tests
+                  command: uv run pytest tools/query-performance-ai/query_performance_ai -v --junitxml=junit-results/junit-query-performance-ai.xml
+            - run:
+                  name: Run pr-approval-agent (stamphog) tests
+                  command: |
+                      found=0
+                      for dir in products/stamphog/packages/pr-approval-agent tools/pr-approval-agent; do
+                        [ -d "$dir" ] || continue
+                        found=1
+                        uv run pytest "$dir" -v --junitxml="junit-results/junit-pr-approval-agent-$(echo "$dir" | tr / -).xml"
+                      done
+                      if [ "$found" = "0" ]; then
+                        echo "pr-approval-agent engine not found at either path"
+                        exit 1
+                      fi
+            - run:
+                  name: Run dependency detection script tests
+                  command: uv run pytest bin/test/test_find_python_dependencies.py -v --junitxml=junit-results/junit-dependency-detection.xml
+            - collect-junit
+
+    # --- backend ------------------------------------------------------------ #
+
+    backend-repo-checks:
+        # Source: ci-backend.yml / repo-checks
+        executor: python
+        steps:
+            - checkout
+            - setup-uv
+            - run:
+                  name: Fetch deleted migration paths
+                  command: .github/scripts/list-removed-renamed-paths.sh > /tmp/deleted-migration-paths.txt
+            - run:
+                  name: Check deleted migrations
+                  command: ./bin/hogli lint:migration-deletions < /tmp/deleted-migration-paths.txt
+            - run:
+                  name: Bootstrap scaffold product
+                  command: ./bin/hogli product:bootstrap spline_reticulator --non-interactive
+            - run:
+                  name: Lint product structure
+                  command: ./bin/hogli product:lint --all
+            - run:
+                  name: Lint owners.yaml files
+                  command: ./bin/hogli owners:lint
+            - run:
+                  name: Check version specifiers
+                  command: uv run python .github/scripts/check-version-specifiers.py
+            - run:
+                  name: Check IDOR model coverage
+                  command: uv run python .github/scripts/check-idor-model-coverage.py
+            - run:
+                  name: Check DWH presentation layer stays source-agnostic
+                  command: uv run python .github/scripts/check-dwh-source-agnostic.py
+            - run:
+                  name: Check operator parity
+                  command: uv run python .github/scripts/check-operator-parity.py
+            - run:
+                  name: Check module boundaries (tach)
+                  command: uv run tach check --dependencies --interfaces
+            - run:
+                  name: Check product facade enforcement (import-linter)
+                  command: uv run lint-imports
+            - run:
+                  name: Run repo invariants (whole-repo pytest guards)
+                  command: |
+                      if [ -d posthog/test/repo_invariants ]; then
+                          uv run pytest -p no:cacheprovider posthog/test/repo_invariants
+                      else
+                          uv run pytest -p no:cacheprovider posthog/test/test_startup_import_budget.py posthog/test/test_dataclass_defaults.py
+                      fi
+
+    backend-validate-product-yamls:
+        # Source: ci-backend.yml / validate-product-yamls
+        executor: python
+        resource_class: medium
+        steps:
+            - checkout
+            - setup-uv
+            - run:
+                  name: Validate changed product.yaml owners
+                  command: |
+                      git fetch --no-tags --prune origin master
+                      CHANGED_FILES=$(git diff --name-only "$(git merge-base origin/master HEAD)"..HEAD -- 'products/*/product.yaml')
+                      names=$(echo "$CHANGED_FILES" | sed -n 's|^products/\([^/]*\)/product.yaml$|\1|p' | xargs)
+                      names=$(for n in $names; do [ -f "products/$n/product.yaml" ] && printf '%s ' "$n"; done | xargs)
+                      if [ -z "$names" ]; then
+                        echo "No existing product.yaml files in diff after filtering"
+                      else
+                        ./bin/hogli product:lint:owners $names
+                      fi
+
+    backend-check-migrations:
+        # Source: ci-backend.yml / check-migrations. The master-schema priming
+        # and the two GitHub-cache saves are dropped; see the parity table.
+        executor: linux-machine
+        steps:
+            - checkout
+            - start-dev-stack:
+                  services: db redis7 clickhouse
+            - run:
+                  name: Install uv and Python dependencies
+                  command: |
+                      curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
+                      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+                      sudo apt-get update
+                      sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+                      export PATH="$HOME/.local/bin:$PATH"
+                      uv sync --frozen --dev
+            - run:
+                  name: Install sqlx-cli
+                  command: |
+                      rustup toolchain install 1.91.1 --profile minimal
+                      cargo install sqlx-cli --no-default-features --features native-tls,postgres --locked
+            - run:
+                  name: Run migrations for this PR
+                  command: |
+                      uv run python manage.py migrate
+                      DATABASE_URL="postgres://posthog:posthog@localhost:5432/posthog_persons" \
+                        sqlx migrate run --source rust/persons_migrations/
+            - run:
+                  name: Run migration risk analysis
+                  command: uv run python manage.py analyze_migration_risk --output-json migration_analysis.json || true
+            - store_artifacts:
+                  path: migration_analysis.json
+                  destination: migration_analysis.json
+            - run:
+                  name: Check migrations
+                  command: |
+                      DATABASE_URL="postgres://posthog:posthog@localhost:5432/posthog_persons" \
+                        sqlx migrate info --source rust/persons_migrations/
+                      uv run python manage.py makemigrations --check --dry-run
+            - run:
+                  name: Check CH migrations
+                  command: |
+                      git fetch --no-tags --prune origin master
+                      git diff --name-status "$(git merge-base origin/master HEAD)"..HEAD \
+                        | grep "A.posthog/clickhouse/migrations/" | grep -v README | awk '{print $2}' \
+                        | uv run python manage.py run_migration_check || true
+            - run:
+                  name: Dump migrated schema
+                  command: |
+                      set -eo pipefail
+                      (docker compose -f docker-compose.dev.yml exec -T db pg_dump --schema-only --clean --if-exists -U posthog posthog && \
+                       docker compose -f docker-compose.dev.yml exec -T db pg_dump --data-only --table=django_migrations -U posthog posthog) | gzip > schema.sql.gz
+                      gunzip -t schema.sql.gz
+            - persist_to_workspace:
+                  # The django test shards read this instead of the GitHub
+                  # Actions cache the source workflow writes.
+                  root: .
+                  paths:
+                      - schema.sql.gz
+            - store_artifacts:
+                  path: schema.sql.gz
+                  destination: schema.sql.gz
+            - dump-compose-logs
+
+    backend-check-openapi-types:
+        # Source: ci-backend.yml / check-openapi-types. The auto-commit of
+        # regenerated types is dropped; the job fails on drift instead.
+        executor: linux-machine
+        steps:
+            - checkout
+            - start-dev-stack:
+                  services: db clickhouse
+            - run:
+                  name: Install uv and Python dependencies
+                  command: |
+                      curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
+                      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+                      sudo apt-get update
+                      sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+                      export PATH="$HOME/.local/bin:$PATH"
+                      uv sync --frozen --dev
+            - pnpm-install:
+                  # Not "openapi": restore_cache matches on prefix, so that would
+                  # also hit caches saved under pnpm-v1-openapi-codegen-.
+                  cache-key-suffix: openapi-types
+            - run:
+                  name: Check OpenAPI types are up to date
+                  command: |
+                      if ! ./bin/hogli build:openapi; then
+                          echo "OpenAPI schema generation failed."
+                          echo "Diagnose locally with: python manage.py find_enum_collisions"
+                          exit 1
+                      fi
+                      git diff --exit-code
+            - dump-compose-logs
+
+    backend-django-tests:
+        # Source: ci-backend.yml / django. The source builds a matrix of
+        # (segment x shard x ClickHouse version x events-schema); this keeps the
+        # shard axis on CircleCI `parallelism` and the segment axis as a job
+        # parameter, and drops the ClickHouse compat legs.
+        parameters:
+            segment:
+                type: enum
+                enum: ['core', 'temporal']
+            shards:
+                type: integer
+                default: 6
+        executor: linux-machine-xlarge
+        parallelism: << parameters.shards >>
+        environment:
+            CLICKHOUSE_HOGQL_USE_NEW_EVENTS_SCHEMA: 'false'
+            OBJECT_STORAGE_ENABLED: 'True'
+        steps:
+            - checkout
+            - attach_workspace:
+                  at: /tmp/schema
+            - start-dev-stack
+            - run:
+                  name: Safeguard - ensure no stray Python modules at product root
+                  command: |
+                      BAD_FILES=$(find products -maxdepth 2 -type f -name "*.py" ! -path "*/backend/*" ! -name "__init__.py" ! -name "conftest.py" -o -maxdepth 2 -type d -name "migrations" ! -path "*/backend/*")
+                      if [ -n "$BAD_FILES" ]; then
+                        echo "Found Python code or migrations outside backend/:"
+                        echo "$BAD_FILES"
+                        exit 1
+                      fi
+                      echo "No stray Python files or migrations found at product roots."
+            - run:
+                  name: Install uv and Python dependencies
+                  command: |
+                      curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
+                      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+                      sudo apt-get update
+                      sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+                      export PATH="$HOME/.local/bin:$PATH"
+                      uv sync --frozen --dev
+            - run:
+                  name: Set up needed files
+                  command: |
+                      mkdir -p frontend/dist
+                      touch frontend/dist/index.html frontend/dist/layout.html frontend/dist/exporter.html
+                      ./bin/download-mmdb
+            - run:
+                  name: Prime test_posthog from the check-migrations schema dump
+                  command: |
+                      if [ ! -f /tmp/schema/schema.sql.gz ]; then
+                          echo "No schema dump on the workspace; the migrate step below builds test_posthog"
+                          exit 0
+                      fi
+                      mkdir -p .postgres-backups
+                      cp /tmp/schema/schema.sql.gz .postgres-backups/schema-latest.sql.gz
+                      ./bin/hogli db:restore-test-db || echo "Schema restore failed; falling back to a full migrate"
+            - run:
+                  name: Migrate test_posthog if the restore did not cover it
+                  command: uv run python manage.py migrate || echo "Out-of-process migrate failed; pytest --reuse-db will run it"
+            # The segment is known when the config compiles, so the two globs
+            # are separate `when` blocks. A runtime `if` on the same value would
+            # leave the other segment's glob in the compiled body as a branch
+            # that can never be taken.
+            - when:
+                  condition:
+                      equal: ['core', << parameters.segment >>]
+                  steps:
+                      - run:
+                            name: Run core tests
+                            no_output_timeout: 30m
+                            command: |
+                                mkdir -p junit-results
+                                # CircleCI splits on timing data it collects from
+                                # store_test_results, replacing the source
+                                # workflow's .test_durations file and pytest-split.
+                                TESTS=$(circleci tests glob "posthog/**/test_*.py" "ee/**/test_*.py" "products/*/backend/**/test_*.py" \
+                                    | grep -v '^posthog/temporal/' | circleci tests split --split-by=timings)
+                                if [ -z "$TESTS" ]; then
+                                    echo "No tests in this shard"
+                                    exit 0
+                                fi
+                                uv run pytest $TESTS \
+                                    -v --junitxml="junit-results/junit-core-$CIRCLE_NODE_INDEX.xml" \
+                                    --snapshot-warn-unused
+            - when:
+                  condition:
+                      equal: ['temporal', << parameters.segment >>]
+                  steps:
+                      - run:
+                            name: Run temporal tests
+                            no_output_timeout: 30m
+                            command: |
+                                mkdir -p junit-results
+                                TESTS=$(circleci tests glob "posthog/temporal/**/test_*.py" | circleci tests split --split-by=timings)
+                                if [ -z "$TESTS" ]; then
+                                    echo "No tests in this shard"
+                                    exit 0
+                                fi
+                                uv run pytest $TESTS \
+                                    -v --junitxml="junit-results/junit-temporal-$CIRCLE_NODE_INDEX.xml" \
+                                    --snapshot-warn-unused
+            - collect-junit
+            - dump-compose-logs
+
+    backend-product-tests:
+        # Source: ci-backend.yml / turbo-tests. The source discovers the product
+        # matrix at runtime from each product's package.json `backend:test`
+        # script; here turbo does the same discovery inside one job.
+        executor: linux-machine-xlarge
+        steps:
+            - checkout
+            - start-dev-stack
+            - run:
+                  name: Install uv and Python dependencies
+                  command: |
+                      curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
+                      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+                      sudo apt-get update
+                      sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+                      export PATH="$HOME/.local/bin:$PATH"
+                      uv sync --frozen --dev
+            - pnpm-install:
+                  cache-key-suffix: turbo
+            - run:
+                  name: Set up needed files
+                  command: |
+                      mkdir -p frontend/dist
+                      touch frontend/dist/index.html frontend/dist/layout.html frontend/dist/exporter.html
+                      ./bin/download-mmdb
+            - run:
+                  name: Migrate test_posthog
+                  command: uv run python manage.py migrate
+            - run:
+                  name: Run product tests
+                  no_output_timeout: 30m
+                  command: |
+                      set +e
+                      pnpm turbo run backend:test --concurrency=1 --output-logs=full --log-order=stream
+                      exit_code=$?
+                      set -e
+                      # pytest exit code 5 is "no tests collected", which is the
+                      # expected result for a product whose suite this shard skips.
+                      if [ "$exit_code" -eq 5 ]; then
+                          echo "No tests collected, treating as success"
+                          exit 0
+                      fi
+                      exit "$exit_code"
+            - run:
+                  name: Stage product JUnit
+                  when: always
+                  command: |
+                      mkdir -p junit-results
+                      for f in products/*/junit-product.xml; do
+                          [ -f "$f" ] || continue
+                          cp "$f" "junit-results/junit-product-$(basename "$(dirname "$f")").xml"
+                      done
+            - collect-junit
+            - dump-compose-logs
+
+    # --- frontend ----------------------------------------------------------- #
+
+    frontend-format:
+        # Source: ci-frontend.yml / frontend-format
+        executor: node
+        steps:
+            - checkout
+            - pnpm-install:
+                  install-command: pnpm --filter=@posthog/playwright... install --frozen-lockfile
+                  cache-key-suffix: frontend
+            - run:
+                  name: Prepare frontend
+                  command: bin/turbo --filter=@posthog/frontend prepare
+            - run:
+                  name: Check formatting with oxfmt
+                  command: pnpm run format:frontend:check
+            - run:
+                  name: Lint with Stylelint
+                  command: pnpm run lint:css
+            - run:
+                  name: Check product colour tokens all resolve
+                  command: pnpm --filter=@posthog/frontend check-color-tokens
+            - run:
+                  name: Lint with Oxlint
+                  command: pnpm exec oxlint --quiet
+            - run:
+                  name: Check markdown formatting with oxfmt
+                  command: pnpm exec oxfmt --check "**/*.{md,mdx}"
+            - run:
+                  name: Check YAML formatting with oxfmt
+                  command: pnpm exec oxfmt --check "**/*.{yaml,yml}"
+            - run:
+                  name: Lint markdown files
+                  command: pnpm exec markdownlint-cli2 --config .config/.markdownlint-cli2.jsonc "**/*.{md,mdx}"
+
+    frontend-typescript-checks:
+        # Source: ci-frontend.yml / frontend-typescript-checks
+        executor: node-xlarge
+        steps:
+            - checkout
+            - pnpm-install:
+                  install-command: pnpm --filter=@posthog/playwright... install --no-frozen-lockfile
+                  cache-key-suffix: frontend
+            - run:
+                  name: Prepare frontend
+                  command: bin/turbo --filter=@posthog/frontend prepare
+            - restore_cache:
+                  keys:
+                      - typegen-v1-{{ checksum "pnpm-lock.yaml" }}
+                      - typegen-v1-
+            - run:
+                  name: Build products
+                  command: pnpm --filter=@posthog/frontend build:products
+            - run:
+                  name: Check if products.tsx and products.json are up to date
+                  command: pnpm --filter=@posthog/frontend build:products && git diff --exit-code
+            - run:
+                  name: Kea typegen
+                  command: pnpm --filter=@posthog/frontend typegen:write
+            - run:
+                  name: Re-format files after typegen
+                  command: pnpm exec oxfmt "./{products,frontend/src}/**/*.{ts,tsx}"
+            - save_cache:
+                  key: typegen-v1-{{ checksum "pnpm-lock.yaml" }}
+                  paths:
+                      - .typegen
+            - run:
+                  name: Run typescript check (tsgo)
+                  command: pnpm --filter=@posthog/frontend typescript:check
+            - run:
+                  name: Check if schema.json and validators.js are up to date
+                  command: pnpm --filter=@posthog/frontend schema:build:json && git diff --exit-code
+            - run:
+                  name: Check if mobile replay "schema.json" is up to date
+                  command: pnpm --filter=@posthog/frontend mobile-replay:schema:build:json && git diff --exit-code
+            - run:
+                  name: Validate SetupTaskId completions
+                  command: node bin/validate-setup-tasks.mjs
+
+    frontend-jest:
+        # Source: ci-frontend.yml / jest. The source matrix is
+        # (segment: FOSS|EE) x (chunk: 1..4); segment stays a job parameter and
+        # the chunk axis becomes CircleCI parallelism.
+        parameters:
+            segment:
+                type: enum
+                enum: ['FOSS', 'EE']
+        executor: node
+        parallelism: 4
+        steps:
+            - checkout
+            - when:
+                  # The FOSS leg asserts the suite passes without the ee/ tree,
+                  # exactly as the source `Remove ee` step does. It has to run
+                  # before the install so the workspace never resolves ee.
+                  condition:
+                      equal: ['FOSS', << parameters.segment >>]
+                  steps:
+                      - run:
+                            name: Remove ee
+                            command: rm -rf ee
+            - pnpm-install:
+                  install-command: pnpm --filter=@posthog/frontend... install --frozen-lockfile
+                  cache-key-suffix: frontend
+            - run:
+                  name: Test with Jest (<< parameters.segment >>)
+                  no_output_timeout: 20m
+                  command: |
+                      mkdir -p junit-results
+                      SELECTION_B64='<< pipeline.parameters.selected-jest-paths-b64 >>'
+                      if [ -n "$SELECTION_B64" ]; then
+                          # --findRelatedTests walks jest's import graph from the
+                          # changed sources. The payload arrives base64-encoded
+                          # so the shell never re-parses a path.
+                          echo "$SELECTION_B64" | base64 --decode > /tmp/jest-selection.txt
+                          # A read loop rather than `mapfile`, which needs bash 4
+                          # and so cannot be exercised on a macOS developer box.
+                          SELECTED=()
+                          # `|| [ -n "$selected_path" ]` keeps the final path: the
+                          # payload has no trailing newline, so read returns 1 on
+                          # the last line even though it read it.
+                          while IFS= read -r selected_path || [ -n "$selected_path" ]; do
+                              [ -n "$selected_path" ] && SELECTED+=("$selected_path")
+                          done < /tmp/jest-selection.txt
+                          if [ "${#SELECTED[@]}" -eq 0 ]; then
+                              echo "Empty selection — nothing to run in this shard"
+                              exit 0
+                          fi
+                          pnpm --filter=@posthog/frontend exec jest \
+                              --findRelatedTests "${SELECTED[@]}" \
+                              --shard="$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL" \
+                              --ci --reporters=default --reporters=jest-junit
+                      else
+                          pnpm --filter=@posthog/frontend exec jest \
+                              --shard="$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL" \
+                              --ci --reporters=default --reporters=jest-junit
+                      fi
+                  environment:
+                      JEST_JUNIT_OUTPUT_DIR: junit-results
+                      JEST_JUNIT_OUTPUT_NAME: junit-jest.xml
+            - collect-junit
+
+    frontend-jest-replay-shared:
+        # Source: ci-frontend.yml / jest-replay-shared
+        executor: node
+        resource_class: medium
+        steps:
+            - checkout
+            - pnpm-install:
+                  cache-key-suffix: replay-shared
+            - run:
+                  name: Test with Jest
+                  command: pnpm --filter=@posthog/replay-shared test
+            - collect-junit
+
+    frontend-bundle-size:
+        # Source: ci-frontend.yml / frontend-bundle-size. Only the gating
+        # assertions are ported — every "post CI report" step there writes a PR
+        # comment, which has no CircleCI equivalent.
+        executor: node-xlarge
+        steps:
+            - checkout
+            - pnpm-install:
+                  install-command: pnpm --filter=@posthog/playwright... install --frozen-lockfile
+                  cache-key-suffix: frontend
+            - run:
+                  name: Prepare frontend
+                  command: bin/turbo --filter=@posthog/frontend prepare
+            - run:
+                  name: Build products
+                  command: pnpm --filter=@posthog/frontend build:products
+            - run:
+                  name: Build frontend (bundle-size + eager-graph report)
+                  no_output_timeout: 25m
+                  command: pnpm --filter=@posthog/frontend build:with-report
+            - run:
+                  name: Check toolbar bundle stays under the CloudFront gzip limit
+                  command: pnpm --filter=@posthog/frontend check-toolbar-size
+            - run:
+                  name: Check toolbar graph stays inside its module boundary
+                  command: pnpm --filter=@posthog/frontend check-toolbar-graph
+            - run:
+                  name: Check toolbar for CSP eval violations
+                  command: pnpm --filter=@posthog/frontend check-toolbar-csp-eval
+            - run:
+                  name: Calculate dist folder size
+                  command: du -sh frontend/dist || true
+            - store_artifacts:
+                  path: frontend/dist
+                  destination: frontend-dist
+
+    # --- storybook / e2e ----------------------------------------------------- #
+
+    storybook-build:
+        # Source: ci-storybook.yml / build-storybook
+        executor: node-xlarge
+        steps:
+            - checkout
+            - pnpm-install:
+                  install-command: pnpm --filter=@posthog/storybook... install --frozen-lockfile
+                  cache-key-suffix: storybook
+            - run:
+                  name: Build Storybook
+                  no_output_timeout: 30m
+                  command: |
+                      bin/turbo --filter=@posthog/storybook prepare
+                      pnpm --filter=@posthog/storybook build --test
+            - persist_to_workspace:
+                  root: .
+                  paths:
+                      - common/storybook/dist
+
+    storybook-visual-regression:
+        # Source: ci-storybook.yml / visual-regression. The source shards by a
+        # runtime-computed story matrix across chromium and webkit; this keeps
+        # the browser axis as a job parameter and shards with parallelism.
+        parameters:
+            browser:
+                type: enum
+                enum: ['chromium', 'webkit']
+        executor: node-xlarge
+        parallelism: 4
+        steps:
+            - checkout
+            - attach_workspace:
+                  at: .
+            - pnpm-install:
+                  install-command: pnpm --filter=@posthog/storybook... install --frozen-lockfile
+                  cache-key-suffix: storybook
+            - run:
+                  name: Install Playwright << parameters.browser >>
+                  command: pnpm exec playwright install --with-deps << parameters.browser >>
+            - run:
+                  name: Serve Storybook in the background
+                  background: true
+                  command: pnpm --filter=@posthog/storybook exec http-server dist --port 6006 --silent
+            - run:
+                  name: Wait for Storybook
+                  command: |
+                      for _ in $(seq 1 30); do
+                          curl -sf http://localhost:6006 > /dev/null && exit 0
+                          sleep 2
+                      done
+                      echo "Storybook did not come up on :6006"
+                      exit 1
+            - run:
+                  name: Run @storybook/test-runner (<< parameters.browser >>)
+                  no_output_timeout: 30m
+                  environment:
+                      STORYBOOK_URL: http://localhost:6006
+                  command: |
+                      mkdir -p junit-results
+                      pnpm --filter=@posthog/storybook exec test-storybook \
+                          --browsers << parameters.browser >> \
+                          --shard="$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL" \
+                          --ci
+            - collect-junit
+            - store_artifacts:
+                  path: frontend/__snapshots__
+                  destination: snapshots-<< parameters.browser >>
+
+    e2e-playwright:
+        # Source: ci-e2e-playwright.yml / playwright
+        executor: linux-machine-xlarge
+        parallelism: 4
+        steps:
+            - checkout
+            - start-dev-stack
+            - run:
+                  name: Install uv and Python dependencies
+                  command: |
+                      curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
+                      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+                      sudo apt-get update
+                      sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+                      export PATH="$HOME/.local/bin:$PATH"
+                      uv sync --frozen --dev
+            - pnpm-install:
+                  cache-key-suffix: playwright
+            - run:
+                  name: Install Playwright browsers
+                  command: pnpm --filter=@posthog/playwright exec playwright install --with-deps chromium
+            - run:
+                  name: Build frontend
+                  no_output_timeout: 25m
+                  command: pnpm --filter=@posthog/frontend build
+            - run:
+                  name: Migrate and start PostHog
+                  command: |
+                      uv run python manage.py migrate
+                      uv run python manage.py runserver 0.0.0.0:8000 &
+                      for _ in $(seq 1 60); do
+                          curl -sf http://localhost:8000/_health && break
+                          sleep 5
+                      done
+            - run:
+                  name: Run Playwright tests
+                  no_output_timeout: 40m
+                  command: |
+                      mkdir -p junit-results
+                      SPECS=$(circleci tests glob "playwright/**/*.spec.ts" | circleci tests split --split-by=timings)
+                      if [ -z "$SPECS" ]; then
+                          echo "No specs in this shard"
+                          exit 0
+                      fi
+                      pnpm --filter=@posthog/playwright exec playwright test $SPECS
+            - collect-junit
+            - store_artifacts:
+                  path: playwright-report
+                  destination: playwright-report
+            - dump-compose-logs
+
+    # --- node.js ------------------------------------------------------------- #
+
+    nodejs-lint:
+        # Source: ci-nodejs.yml / lint
+        executor: node
+        steps:
+            - checkout
+            - pnpm-install:
+                  cache-key-suffix: nodejs
+            - run:
+                  name: Prepare Node.js workspace
+                  command: bin/turbo --filter=@posthog/nodejs prepare
+            - run:
+                  name: Check formatting with prettier
+                  command: pnpm --filter=@posthog/nodejs format:check
+            - run:
+                  name: Lint with ESLint
+                  command: pnpm --filter=@posthog/nodejs lint
+            - run:
+                  name: Check ingestion boundaries
+                  command: |
+                      if [ -f nodejs/bin/check-ingestion-boundaries.mjs ]; then
+                          node nodejs/bin/check-ingestion-boundaries.mjs
+                      else
+                          echo "Ingestion boundary guard not present on this branch; skipping."
+                      fi
+
+    nodejs-build:
+        # Source: ci-nodejs.yml / build
+        executor: node
+        steps:
+            - checkout
+            - pnpm-install:
+                  cache-key-suffix: nodejs
+            - run:
+                  name: Prepare Node.js workspace
+                  command: bin/turbo --filter=@posthog/nodejs prepare
+            - run:
+                  name: Check builds correctly
+                  command: pnpm --filter=@posthog/nodejs build
+            - run:
+                  name: Sanity check output
+                  command: |
+                      cd nodejs
+                      # The entrypoint is expected to fail here; the check is that it
+                      # fails for a real reason and not MODULE_NOT_FOUND.
+                      if node dist/index.js 2>&1 | grep "MODULE_NOT_FOUND"; then
+                          echo "Build is invalid - failed with 'MODULE_NOT_FOUND' error"
+                          exit 1
+                      else
+                          echo "Build is valid - failed as expected without module errors"
+                      fi
+
+    nodejs-tests:
+        # Source: ci-nodejs.yml / tests (matrix shard 1..3 -> parallelism 3)
+        executor: linux-machine-xlarge
+        parallelism: 3
+        steps:
+            - checkout
+            - start-dev-stack
+            - run:
+                  name: Install uv and Python dependencies
+                  command: |
+                      curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
+                      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+                      sudo apt-get update
+                      sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+                      export PATH="$HOME/.local/bin:$PATH"
+                      uv sync --frozen --dev
+            - run:
+                  name: Download MaxMind Database
+                  command: ./bin/download-mmdb
+            - pnpm-install:
+                  cache-key-suffix: nodejs
+            - run:
+                  name: Create Kafka topics
+                  command: docker compose -f docker-compose.dev.yml up kafka-init
+            - run:
+                  name: Set up databases
+                  command: |
+                      pnpm --filter=@posthog/nodejs setup:test
+                      cd nodejs && pnpm run setup:test:persons-parity
+            - run:
+                  name: Prepare Node.js workspace
+                  command: bin/turbo --filter=@posthog/nodejs prepare
+            - run:
+                  name: Test with Jest
+                  no_output_timeout: 45m
+                  command: |
+                      mkdir -p junit-results
+                      # CIRCLE_NODE_INDEX is zero-based; jest --shard is one-based.
+                      bin/turbo run test --filter=@posthog/nodejs -- \
+                          --shard="$((CIRCLE_NODE_INDEX + 1))/$CIRCLE_NODE_TOTAL" --ci
+            - run:
+                  name: Test postgres-parity (isolated DB)
+                  command: cd nodejs && pnpm run test:postgres-parity
+            - collect-junit
+            - dump-compose-logs
+
+    nodejs-rust-ingestion-e2e:
+        # Source: ci-nodejs.yml / rust_ingestion_e2e
+        executor: linux-machine-xlarge
+        steps:
+            - checkout
+            - start-dev-stack:
+                  services: db redis7 kafka clickhouse
+            - install-rust
+            - run:
+                  name: Install uv and Python dependencies
+                  command: |
+                      curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
+                      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+                      sudo apt-get update
+                      sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+                      export PATH="$HOME/.local/bin:$PATH"
+                      uv sync --frozen --dev
+            - pnpm-install:
+                  cache-key-suffix: nodejs
+            - run:
+                  name: Set up databases
+                  command: pnpm --filter=@posthog/nodejs setup:test
+            - run:
+                  name: Build Node.js workspace dependencies
+                  command: bin/turbo --filter=@posthog/nodejs build
+            - run:
+                  name: Pre-build Rust ingestion consumer
+                  no_output_timeout: 30m
+                  command: cd rust && cargo build --bin ingestion-consumer
+            - save-cargo-cache
+            - run:
+                  name: Test Rust ingestion consumer with Node ingestion API
+                  no_output_timeout: 20m
+                  command: cd nodejs && pnpm run test:rust-ingestion-e2e
+            - dump-compose-logs
+
+    # --- rust ---------------------------------------------------------------- #
+
+    rust-build:
+        # Source: ci-rust.yml / build. The source builds only the crates its
+        # `affected` job computes; this builds the workspace.
+        executor: rust
+        steps:
+            - checkout
+            - run:
+                  name: Install system OpenSSL and protoc
+                  command: |
+                      sudo apt-get update
+                      sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+            - install-rust
+            - run:
+                  name: Run cargo build
+                  no_output_timeout: 30m
+                  command: cd rust && cargo build --all
+            - save-cargo-cache
+
+    rust-lint:
+        # Source: ci-rust.yml / linting
+        executor: rust
+        steps:
+            - checkout
+            - run:
+                  name: Install system OpenSSL and protoc
+                  command: |
+                      sudo apt-get update
+                      sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+            - install-rust:
+                  components: rustfmt clippy
+            - run:
+                  name: Check format
+                  command: cd rust && cargo fmt -- --check
+            - run:
+                  name: Run clippy
+                  no_output_timeout: 25m
+                  command: cd rust && cargo clippy --all-targets --all-features -- -D warnings
+            - run:
+                  name: Run cargo check
+                  command: cd rust && cargo check --all-features
+            - run:
+                  name: Run cargo shear
+                  command: |
+                      cargo install cargo-shear --version 1.1.12 --locked
+                      cd rust && cargo shear
+            - save-cargo-cache
+
+    rust-test:
+        # Source: ci-rust.yml / test
+        executor: linux-machine-xlarge
+        steps:
+            - checkout
+            - start-dev-stack:
+                  services: db redis7 kafka clickhouse
+            - run:
+                  name: Install protoc
+                  command: |
+                      sudo apt-get update
+                      sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
+            - install-rust
+            - run:
+                  name: Install uv and Python dependencies
+                  command: |
+                      curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
+                      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+                      sudo apt-get update
+                      sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+                      export PATH="$HOME/.local/bin:$PATH"
+                      uv sync --frozen --dev
+            - run:
+                  name: Set up databases
+                  command: uv run python manage.py setup_test_environment
+            - run:
+                  name: Install sqlx-cli and run migrations
+                  command: |
+                      cargo install sqlx-cli --no-default-features --features native-tls,postgres --locked
+                      cd rust
+                      DATABASE_URL="postgres://posthog:posthog@localhost:5432/posthog_persons" sqlx database create
+                      DATABASE_URL="postgres://posthog:posthog@localhost:5432/posthog_persons" \
+                        sqlx migrate run --source persons_migrations/
+                      DATABASE_URL='postgres://posthog:posthog@localhost:5432/test_posthog' \
+                        sqlx migrate run --source behavioral_cohorts_migrations/
+            - run:
+                  name: Download MaxMind Database
+                  command: ./bin/download-mmdb
+            - run:
+                  name: Run cargo test
+                  no_output_timeout: 30m
+                  command: |
+                      # nextest, not plain `cargo test`, because it emits the JUnit
+                      # XML that store_test_results and the Trunk upload consume.
+                      # It skips doctests, so those run separately below.
+                      cargo install cargo-nextest --version 0.9.140 --locked
+                      mkdir -p junit-results
+                      cd rust
+                      cargo nextest run --all-features --no-tests=pass
+                      cp target/nextest/default/junit.xml ../junit-results/junit-rust.xml || true
+                      cargo test --doc
+            - save-cargo-cache
+            - collect-junit
+            - dump-compose-logs
+
+    rust-personhog-gate:
+        # Source: ci-rust.yml / personhog-gate. The source runs ten chaos
+        # scenarios; the same ten run here, sequentially, in one job.
+        executor: linux-machine-xlarge
+        steps:
+            - checkout
+            - start-dev-stack:
+                  services: db kafka
+            - run:
+                  name: Install protoc
+                  command: |
+                      sudo apt-get update
+                      sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
+            - install-rust
+            - run:
+                  name: Create and migrate the persons database
+                  command: |
+                      cargo install sqlx-cli --no-default-features --features native-tls,postgres --locked
+                      DATABASE_URL="postgres://posthog:posthog@localhost:5432/posthog_persons" sqlx database create
+                      DATABASE_URL="postgres://posthog:posthog@localhost:5432/posthog_persons" \
+                        sqlx migrate run --source rust/persons_migrations/
+            - run:
+                  name: Install etcd
+                  # The harness coordination protocol needs etcd; the source job
+                  # brings it up as a compose service alongside Postgres/Kafka.
+                  command: docker compose -f docker-compose.dev.yml up -d etcd || echo "no etcd service in this compose file"
+            - run:
+                  name: Build the personhog stack and harness
+                  no_output_timeout: 30m
+                  command: cd rust && cargo build -p personhog-test-harness -p personhog-replica -p personhog-router
+            - run:
+                  name: Test the harness verification logic
+                  command: cd rust && cargo test -p personhog-test-harness
+            - run:
+                  name: Run the e2e gate scenarios
+                  no_output_timeout: 30m
+                  command: cd rust && cargo run -p personhog-test-harness -- --all-scenarios
+            - save-cargo-cache
+            - dump-compose-logs
+
+    rust-flags-integration:
+        # Source: ci-rust-flags-integration.yml / rust-flags-integration
+        executor: linux-machine-xlarge
+        steps:
+            - checkout
+            - start-dev-stack:
+                  services: db redis7
+            - install-rust
+            - run:
+                  name: Install uv and Python dependencies
+                  command: |
+                      curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
+                      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+                      sudo apt-get update
+                      sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+                      export PATH="$HOME/.local/bin:$PATH"
+                      uv sync --frozen --dev
+            - run:
+                  name: Set up test database schema
+                  command: |
+                      uv run python manage.py migrate --run-syncdb
+                      cd rust && sqlx migrate run --source persons_migrations/
+            - run:
+                  name: Build Rust services
+                  no_output_timeout: 30m
+                  command: cd rust && cargo build -p feature-flags -p personhog-replica -p personhog-router
+            - run:
+                  name: Download MaxMind Database
+                  command: ./bin/download-mmdb
+            - run:
+                  name: Start Rust flags service
+                  command: |
+                      cd rust
+                      ./target/debug/feature-flags > /tmp/rust-flags.log 2>&1 &
+                      for _ in $(seq 1 30); do
+                          curl -sf http://localhost:3001/_readiness && break
+                          sleep 2
+                      done
+            - run:
+                  name: Run the /flags integration tests
+                  no_output_timeout: 20m
+                  command: |
+                      mkdir -p junit-results
+                      uv run pytest posthog/api/test/rust_integration/ -v --tb=short \
+                          --junitxml=junit-results/junit-rust-flags.xml
+            - run:
+                  name: Dump service logs
+                  when: on_fail
+                  command: cat /tmp/rust-flags.log || echo "No log file found"
+            - save-cargo-cache
+            - collect-junit
+            - dump-compose-logs
+
+    # --- proto ---------------------------------------------------------------- #
+
+    proto-lint:
+        # Source: ci-proto.yml / lint
+        docker:
+            - image: bufbuild/buf:latest
+        resource_class: small
+        steps:
+            - checkout
+            - run:
+                  name: Lint protos
+                  command: buf lint
+
+    proto-breaking:
+        # Source: ci-proto.yml / breaking
+        docker:
+            - image: bufbuild/buf:latest
+        resource_class: small
+        steps:
+            - checkout
+            - run:
+                  name: Check for breaking changes
+                  command: buf breaking --against '.git#branch=origin/master'
+
+    proto-python-codegen:
+        # Source: ci-proto.yml / python-codegen
+        executor: python
+        resource_class: medium
+        steps:
+            - checkout
+            - run:
+                  name: Install codegen tools
+                  command: pip install grpcio-tools protoletariat ruff
+            - run:
+                  name: Regenerate Python proto stubs
+                  command: bash bin/generate_personhog_proto.sh
+            - run:
+                  name: Check for diff
+                  command: |
+                      # Intent-to-add so brand-new generated files show up in git diff
+                      git add -N posthog/personhog_client/proto/generated/
+                      if ! git diff --exit-code posthog/personhog_client/proto/generated/; then
+                        echo "ERROR: Generated Python proto stubs are out of date."
+                        echo "Run 'bash bin/generate_personhog_proto.sh' and commit the result."
+                        exit 1
+                      fi
+                      echo "Generated Python proto stubs are up to date"
+
+    proto-node-codegen:
+        # Source: ci-proto.yml / node-codegen
+        executor: node
+        resource_class: medium
+        steps:
+            - checkout
+            - run:
+                  name: Install buf
+                  command: |
+                      curl -fsSL --retry 3 \
+                          "https://github.com/bufbuild/buf/releases/download/v1.47.2/buf-$(uname -s)-$(uname -m)" \
+                          -o /tmp/buf
+                      chmod +x /tmp/buf
+                      sudo mv /tmp/buf /usr/local/bin/buf
+                      buf --version
+            - pnpm-install:
+                  cache-key-suffix: proto
+            - run:
+                  name: Regenerate Node proto stubs
+                  command: |
+                      pnpm --dir nodejs run generate:personhog-proto
+                      pnpm --dir nodejs run generate:ingestion-worker-proto
+            - run:
+                  name: Check for diff
+                  command: |
+                      git add -N nodejs/src/common/generated/personhog/ nodejs/src/common/generated/ingestion-worker/
+                      if ! git diff --exit-code nodejs/src/common/generated/personhog/ nodejs/src/common/generated/ingestion-worker/; then
+                        echo "ERROR: Generated Node proto stubs are out of date."
+                        exit 1
+                      fi
+                      echo "Generated Node proto stubs are up to date"
+
+    # --- hog ------------------------------------------------------------------ #
+
+    hog-tests:
+        # Source: ci-hog.yml / hog-tests. The npm publish leg (release-hogvm) is
+        # dropped as a release job.
+        executor: python-node
+        steps:
+            - checkout
+            - setup-uv
+            - pnpm-install:
+                  cache-key-suffix: hog
+            - run:
+                  name: Check if STL bytecode is up to date
+                  command: |
+                      uv run python -m common.hogvm.stl.compile
+                      git diff --exit-code
+            - run:
+                  name: Run HogVM Python tests
+                  command: |
+                      mkdir -p junit-results
+                      uv run pytest common/hogvm --junitxml=junit-results/junit-hogvm-python.xml
+            - run:
+                  name: Run HogVM TypeScript tests
+                  command: |
+                      pnpm --filter=@posthog/hogvm install --frozen-lockfile
+                      pnpm --filter=@posthog/hogvm test
+            - run:
+                  name: Run Hog tests
+                  command: |
+                      pnpm --filter=@posthog/hogvm install --frozen-lockfile
+                      pnpm --filter=@posthog/hogvm compile:stl
+                      bin/turbo --filter=@posthog/hogvm build
+                      cd common/hogvm
+                      ./test.sh && git diff --exit-code
+            - collect-junit
+
+    # --- dagster --------------------------------------------------------------- #
+
+    dagster-tests:
+        # Source: ci-dagster.yml / dagster
+        executor: linux-machine-xlarge
+        parallelism: 4
+        steps:
+            - checkout
+            - start-dev-stack:
+                  services: db redis7 clickhouse
+            - run:
+                  name: Install uv and Python dependencies
+                  command: |
+                      curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
+                      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+                      sudo apt-get update
+                      sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+                      export PATH="$HOME/.local/bin:$PATH"
+                      uv sync --frozen --dev
+            - run:
+                  name: Run persons and ClickHouse migrations
+                  command: |
+                      cargo install sqlx-cli --no-default-features --features native-tls,postgres --locked || true
+                      DATABASE_URL="postgres://posthog:posthog@localhost:5432/posthog_persons" sqlx database create || true
+                      DATABASE_URL="postgres://posthog:posthog@localhost:5432/posthog_persons" \
+                        sqlx migrate run --source rust/persons_migrations/
+                      uv run python manage.py migrate
+                      uv run python manage.py migrate_clickhouse
+            - run:
+                  name: Run dagster tests
+                  no_output_timeout: 30m
+                  command: |
+                      mkdir -p junit-results
+                      TESTS=$(circleci tests glob "posthog/dags/**/test_*.py" "products/*/dags/**/test_*.py" \
+                          | circleci tests split --split-by=timings)
+                      if [ -z "$TESTS" ]; then
+                          echo "No dagster tests in this shard"
+                          exit 0
+                      fi
+                      uv run pytest $TESTS --reuse-db --reruns 2 --reruns-delay 1 -r fEsxX \
+                          --junitxml="junit-results/junit-dagster-$CIRCLE_NODE_INDEX.xml"
+            - collect-junit
+            - dump-compose-logs
+
+    # --- mcp -------------------------------------------------------------------- #
+
+    mcp-build:
+        # Source: ci-mcp.yml / build
+        executor: python-node
+        steps:
+            - checkout
+            - setup-uv
+            - pnpm-install:
+                  cache-key-suffix: mcp
+            - run:
+                  name: Check MCP code quality
+                  command: |
+                      pnpm exec oxlint --quiet services/mcp
+                      pnpm exec oxfmt --check "services/mcp/**/*.{md,mdx}"
+                      pnpm exec oxfmt --check "services/mcp/**/*.{yaml,yml}"
+                      pnpm exec markdownlint-cli2 --config .config/.markdownlint-cli2.jsonc "services/mcp/**/*.{md,mdx}"
+            - run:
+                  name: Build package
+                  command: cd services/mcp && pnpm build
+            - run:
+                  name: Type check (tsgo)
+                  command: cd services/mcp && pnpm typecheck
+            - run:
+                  name: Check MCP schema is up to date
+                  command: |
+                      ./bin/hogli build:schema-mcp
+                      if ! git diff --exit-code services/mcp/schema/tool-inputs.json; then
+                        echo "MCP tool-inputs.json is out of date. Run 'hogli build:schema-mcp' and commit the result."
+                        exit 1
+                      fi
+            - run:
+                  name: Check generated UI apps are up to date
+                  command: |
+                      cd services/mcp && pnpm run generate:ui-apps
+                      if ! git diff --exit-code -- src/ui-apps/apps/generated/ src/resources/ui-apps.generated.ts; then
+                        echo "Generated UI app files are out of date."
+                        git diff --name-only -- src/ui-apps/apps/generated/ src/resources/ui-apps.generated.ts
+                        exit 1
+                      fi
+            - run:
+                  name: Lint tool names
+                  command: cd services/mcp && pnpm lint-tool-names
+
+    mcp-unit-tests:
+        # Source: ci-mcp.yml / unit-tests. The snapshot auto-commit leg
+        # (handle-snapshots) is dropped.
+        executor: node
+        resource_class: medium
+        steps:
+            - checkout
+            - pnpm-install:
+                  cache-key-suffix: mcp
+            - run:
+                  name: Run wrangler pre-build steps
+                  command: |
+                      cd services/mcp
+                      pnpm build
+                      pnpm exec tsx scripts/copy-instructions.ts
+            - run:
+                  name: Run unit tests
+                  command: |
+                      pnpm --filter=@posthog/mcp run test -u
+                      if [ -n "$(git status --porcelain -- services/mcp/tests/unit)" ]; then
+                        git status --short -- services/mcp/tests/unit
+                        echo "MCP unit test artifacts are out of date. Run 'pnpm --filter=@posthog/mcp run test -u' and commit the result."
+                        exit 1
+                      fi
+            - run:
+                  name: Run Hono unit tests
+                  command: cd services/mcp && pnpm run test:hono
+            - collect-junit
+
+    mcp-integration-tests:
+        # Source: ci-mcp.yml / integration-tests
+        executor: linux-machine-xlarge
+        steps:
+            - checkout
+            - start-dev-stack
+            - install-rust
+            - run:
+                  name: Install uv and Python dependencies
+                  command: |
+                      curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
+                      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+                      sudo apt-get update
+                      sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+                      export PATH="$HOME/.local/bin:$PATH"
+                      uv sync --frozen --dev
+            - pnpm-install:
+                  cache-key-suffix: mcp
+            - run:
+                  name: Set up needed files
+                  command: |
+                      mkdir -p frontend/dist
+                      touch frontend/dist/index.html frontend/dist/layout.html frontend/dist/exporter.html
+                      ./bin/download-mmdb
+            - run:
+                  name: Build Rust flags service
+                  no_output_timeout: 30m
+                  command: cd rust && cargo build --bin feature-flags
+            - run:
+                  name: Run migrations
+                  command: uv run python manage.py migrate
+            - run:
+                  name: Start PostHog web and Celery worker
+                  command: |
+                      uv run python manage.py runserver 0.0.0.0:8000 &
+                      for _ in $(seq 1 60); do
+                          curl -sf http://localhost:8000/_health && break
+                          sleep 5
+                      done
+            - run:
+                  name: Run integration tests
+                  no_output_timeout: 45m
+                  command: pnpm --filter=@posthog/mcp test:integration
+            - save-cargo-cache
+            - collect-junit
+            - dump-compose-logs
+
+    mcp-ui-apps:
+        # Source: ci-mcp-ui-apps.yml / build-and-report
+        executor: node
+        resource_class: medium
+        steps:
+            - checkout
+            - pnpm-install:
+                  cache-key-suffix: mcp
+            - run:
+                  name: Check generated UI apps are up to date
+                  command: |
+                      cd services/mcp && pnpm run generate:ui-apps
+                      if ! git diff --exit-code -- src/ui-apps/apps/generated/ src/resources/ui-apps.generated.ts; then
+                        echo "Generated UI app files are out of date."
+                        git diff --name-only -- src/ui-apps/apps/generated/ src/resources/ui-apps.generated.ts
+                        exit 1
+                      fi
+            - run:
+                  name: Build UI Apps
+                  command: cd services/mcp && pnpm run build:ui-apps
+            - run:
+                  name: Validate build output
+                  command: |
+                      # Each app must produce main.js and styles.css. `find`
+                      # recurses into wrapper dirs such as generated/.
+                      missing=0
+                      for app_dir in $(find services/mcp/public/ui-apps -mindepth 1 -type d ! -name generated | sort); do
+                        app=$(basename "$app_dir")
+                        [ -f "$app_dir/main.js" ] || { echo "Missing main.js for $app"; missing=1; }
+                        [ -f "$app_dir/styles.css" ] || { echo "Missing styles.css for $app"; missing=1; }
+                      done
+                      exit "$missing"
+
+    # --- services ----------------------------------------------------------------- #
+
+    llm-gateway-tests:
+        # Source: ci-llm-gateway.yml / llm-gateway
+        executor: python
+        resource_class: medium
+        steps:
+            - checkout
+            - run:
+                  name: Install uv
+                  command: |
+                      curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | sh
+                      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+            - run:
+                  name: Install dependencies
+                  command: cd services/llm-gateway && uv sync --frozen --dev
+            - run:
+                  name: Run tests
+                  command: |
+                      mkdir -p junit-results
+                      cd services/llm-gateway
+                      uv run pytest tests/ -v --tb=short \
+                          --junitxml=../../junit-results/junit-llm-gateway.xml
+            - collect-junit
+
+    oauth-proxy-tests:
+        # Source: ci-oauth-proxy.yml / build-and-test
+        executor: node
+        resource_class: medium
+        steps:
+            - checkout
+            - pnpm-install:
+                  install-command: pnpm install --frozen-lockfile --filter @posthog/oauth-proxy...
+                  cache-key-suffix: oauth-proxy
+            - run:
+                  name: Type check (tsgo)
+                  command: cd services/oauth-proxy && pnpm typecheck
+            - run:
+                  name: Run tests
+                  command: cd services/oauth-proxy && pnpm test
+            - collect-junit
+
+    agent-proxy-checks:
+        # Source: ci-agent-proxy.yml / agent-proxy
+        executor: node
+        resource_class: medium
+        steps:
+            - checkout
+            - pnpm-install:
+                  install-command: pnpm install --frozen-lockfile --filter @posthog/agent-proxy...
+                  cache-key-suffix: agent-proxy
+            - run:
+                  name: Typecheck
+                  command: cd services/agent-proxy && pnpm typecheck
+            - run:
+                  name: Test
+                  command: cd services/agent-proxy && pnpm exec vitest run
+            - run:
+                  name: Lint
+                  command: cd services/agent-proxy && pnpm exec oxlint
+            - run:
+                  name: Format check
+                  command: |
+                      cd services/agent-proxy
+                      pnpm exec oxfmt --check 'src/**/*.ts' 'tests/**/*.ts' 'scripts/**/*.ts'
+            - collect-junit
+
+    integration-service-checks:
+        # Source: ci-integration-service.yml / integration-service
+        executor: node
+        resource_class: medium
+        steps:
+            - checkout
+            - pnpm-install:
+                  install-command: pnpm install --frozen-lockfile --ignore-scripts --filter @posthog/integration-service...
+                  cache-key-suffix: integration-service
+            - run:
+                  name: Typecheck
+                  command: cd services/integration-service && pnpm typecheck
+            - run:
+                  name: Unit tests
+                  command: cd services/integration-service && pnpm test:unit
+            - run:
+                  name: Integration tests
+                  command: cd services/integration-service && pnpm test:integration
+            - run:
+                  name: Lint
+                  command: cd services/integration-service && pnpm exec oxlint
+            - run:
+                  name: Format check
+                  command: cd services/integration-service && pnpm format:check
+            - run:
+                  name: Build
+                  command: cd services/integration-service && pnpm build
+            - collect-junit
+
+    # --- go ------------------------------------------------------------------------ #
+
+    livestream-tests:
+        # Source: ci-livestream.yml / test
+        executor: go
+        steps:
+            - checkout
+            - install-golangci-lint
+            - run:
+                  name: Run golangci-lint
+                  command: cd livestream && golangci-lint run --timeout=5m
+            - run:
+                  name: Check easyjson generated code is up to date
+                  command: |
+                      cd livestream
+                      go run github.com/mailru/easyjson/easyjson@v0.9.0 events/kafka.go
+                      go run github.com/mailru/easyjson/easyjson@v0.9.0 events/filter.go
+                      git diff --exit-code -- events/*_easyjson.go || {
+                        echo "easyjson generated files are out of date. Run easyjson on events/kafka.go and events/filter.go in livestream/ and commit the result."
+                        exit 1
+                      }
+            - run:
+                  name: Run tests
+                  command: cd livestream && go test -v
+
+    livestream-tui-build:
+        # Source: ci-livestream-tui.yml / lint-and-test + build. The source
+        # build matrix covers amd64 and arm64; only amd64 runs here.
+        executor: go
+        steps:
+            - checkout
+            - install-golangci-lint
+            - run:
+                  name: Run golangci-lint
+                  command: cd livestream && golangci-lint run --timeout=5m
+            - run:
+                  name: Run tests
+                  command: cd livestream && go test -v
+            - run:
+                  name: Build
+                  command: cd livestream && GOARCH=amd64 go build ./...
+
+    hobby-installer-build:
+        # Source: ci-hobby-installer.yml / lint-and-test + build
+        executor: go
+        steps:
+            - checkout
+            - install-golangci-lint
+            - run:
+                  name: Run golangci-lint
+                  command: cd bin/hobby-installer && golangci-lint run --timeout=5m
+            - run:
+                  name: Run tests
+                  command: cd bin/hobby-installer && make test
+            - run:
+                  name: Build
+                  command: cd bin/hobby-installer && GOARCH=amd64 go build ./...
+
+    phrocs-tests:
+        # Source: ci-phrocs.yml / test
+        executor: go
+        steps:
+            - checkout
+            - install-golangci-lint
+            - run:
+                  name: Run golangci-lint
+                  command: cd tools/phrocs && golangci-lint run --timeout=5m
+            - run:
+                  name: Run tests
+                  command: cd tools/phrocs && go test -v ./...
+
+    # --- cli / rust tooling ------------------------------------------------------- #
+
+    cli-tests:
+        # Source: ci-cli.yml / tests
+        executor: rust
+        resource_class: large
+        working_directory: ~/project/cli
+        steps:
+            - checkout:
+                  path: ~/project
+            - run:
+                  name: Check Cargo.lock is up to date
+                  command: |
+                      cargo update --workspace --locked
+                      git diff --exit-code Cargo.lock
+            - run:
+                  name: Run tests
+                  no_output_timeout: 20m
+                  command: cargo test --all-features
+
+    cli-clippy:
+        # Source: ci-cli.yml / clippy
+        executor: rust
+        resource_class: large
+        working_directory: ~/project/cli
+        steps:
+            - checkout:
+                  path: ~/project
+            - run:
+                  name: Install clippy
+                  command: rustup component add clippy
+            - run:
+                  name: Run clippy
+                  no_output_timeout: 20m
+                  command: cargo clippy --all-targets -- -D warnings
+
+    cli-format:
+        # Source: ci-cli.yml / format
+        executor: rust
+        resource_class: medium
+        working_directory: ~/project/cli
+        steps:
+            - checkout:
+                  path: ~/project
+            - run:
+                  name: Install rustfmt
+                  command: rustup component add rustfmt
+            - run:
+                  name: Check formatting
+                  command: cargo fmt --all -- --check
+
+    cli-api-release-bundle:
+        # Source: ci-cli.yml / api-cli-release-bundle
+        executor: node
+        resource_class: medium
+        steps:
+            - checkout
+            - pnpm-install:
+                  cache-key-suffix: mcp
+            - run:
+                  name: Build API CLI release bundle
+                  command: pnpm --dir services/mcp run build:cli:release
+            - run:
+                  name: Verify API CLI release bundle
+                  command: |
+                      node -e "const { statSync } = require('node:fs'); if (statSync('cli/lib/posthog-api-cli.mjs').size <= 0) process.exit(1)"
+
+    deltalite-python-tests:
+        # Source: ci-deltalite-python.yml / test
+        executor: python
+        steps:
+            - checkout
+            - install-rust
+            - setup-uv
+            - run:
+                  name: Build and install the extension
+                  no_output_timeout: 30m
+                  command: |
+                      uv run python -m maturin develop --release \
+                          --manifest-path rust/deltalite/python/Cargo.toml
+            - run:
+                  name: Run pytest
+                  command: |
+                      mkdir -p junit-results
+                      uv run pytest rust/deltalite/python/tests -q \
+                          --junitxml=junit-results/junit-deltalite.xml
+            - save-cargo-cache
+            - collect-junit
+
+    # --- repo / workflow hygiene ---------------------------------------------------- #
+
+    scripts-tests:
+        # Source: ci-scripts.yml / script-tests
+        executor: python-node
+        resource_class: medium
+        steps:
+            - checkout
+            - run:
+                  name: Install pytest
+                  command: |
+                      python -m pip install --quiet pytest defusedxml==0.7.1 \
+                          opentelemetry-sdk==1.33.1 opentelemetry-exporter-otlp-proto-http==1.33.1 ./tools/owners
+            - run:
+                  name: Schema-usage scanner tests (Python)
+                  command: python -m pytest .github/scripts/test_schema_usage_scan.py -v -c /dev/null -p no:cacheprovider --noconftest
+            - run:
+                  name: Test-timings reporter tests (Python)
+                  command: python -m pytest .github/scripts/test_report_test_timings.py -v -c /dev/null -p no:cacheprovider --noconftest
+            - run:
+                  name: Workflow-run trace reporter tests (Python)
+                  command: |
+                      if [ -f .github/scripts/test_report_workflow_run_traces.py ]; then
+                          python -m pytest .github/scripts/test_report_workflow_run_traces.py -v -c /dev/null -p no:cacheprovider --noconftest
+                      else
+                          echo "Script not present on this checkout — skipping"
+                      fi
+            - run:
+                  name: Node script tests
+                  command: |
+                      for t in schema-impact.test.js ci-alerts-devex.test.js \
+                               monitor-github-rate-limit.test.js label-pr-from-title.test.js \
+                               assign-reviewers.test.js post-ci-sections.test.mjs \
+                               turbo-discover-cascade.test.js selected-django-shards.test.js \
+                               trunk-impacted-targets.test.js; do
+                          node --test ".github/scripts/$t"
+                      done
+            - run:
+                  name: Optional Node script tests
+                  command: |
+                      for t in weekly-flaky-report.test.mjs weekly-slow-tests-report.test.mjs \
+                               patch-cli-npm-installer.test.mjs; do
+                          if [ -f ".github/scripts/$t" ]; then
+                              node --test ".github/scripts/$t"
+                          else
+                              echo "Skipping $t — not present on this checkout"
+                          fi
+                      done
+            - run:
+                  name: CircleCI path-matcher tests
+                  # New surface: the setup stage's matcher decides what every
+                  # other workflow runs, so it is tested alongside the scripts
+                  # it replaces.
+                  command: |
+                      python -m pip install --quiet 'PyYAML==6.0.3'
+                      python .circleci/scripts/compute-pipeline-parameters.py --selftest
+
+    actionlint:
+        # Source: ci-actionlint.yml / actionlint. The GitHub Actions workflows
+        # stay in the repo, so linting them is still a code check.
+        docker:
+            - image: cimg/base:current
+        resource_class: small
+        environment:
+            ACTIONLINT_VERSION: 1.7.12
+            ACTIONLINT_SCRIPT_REF: 914e7df21a07ef503a81201c76d2b11c789d3fca
+            SHELLCHECK_OPTS: --severity=error
+        steps:
+            - checkout
+            - run:
+                  name: Install actionlint (pinned)
+                  command: |
+                      set -euo pipefail
+                      mkdir -p ./.bin
+                      curl -fsSL --retry 5 --retry-all-errors --retry-max-time 60 --connect-timeout 10 \
+                          -o ./download-actionlint.bash \
+                          "https://raw.githubusercontent.com/rhysd/actionlint/${ACTIONLINT_SCRIPT_REF}/scripts/download-actionlint.bash"
+                      bash ./download-actionlint.bash "${ACTIONLINT_VERSION}" ./.bin
+                      ./.bin/actionlint -version
+            - run:
+                  name: Run actionlint
+                  command: |
+                      set -euo pipefail
+                      mkdir -p /tmp/actionlint-workflows
+                      for workflow in .github/workflows/*.yml .github/workflows/*.yaml; do
+                          [ -e "$workflow" ] || continue
+                          awk -f .github/scripts/flatten-parallel-steps-for-actionlint.awk "$workflow" \
+                              > "/tmp/actionlint-workflows/$(basename "$workflow")"
+                      done
+                      ./.bin/actionlint -config-file .github/actionlint.yaml \
+                          -format '{{json .}}' /tmp/actionlint-workflows/* > actionlint.json
+            - run:
+                  name: Summarize findings
+                  when: always
+                  command: |
+                      [ -f actionlint.json ] || exit 0
+                      echo "Total findings: $(jq length actionlint.json)"
+                      jq -r 'group_by(.kind) | map({kind: .[0].kind, count: length}) | sort_by(-.count) | .[] | "\(.kind): \(.count)"' actionlint.json
+            - store_artifacts:
+                  # Must stay after the summarize step: the artifact only exists
+                  # once actionlint has written it.
+                  path: actionlint.json
+                  destination: actionlint-findings.json
+
+    lint-workflows:
+        # Source: ci-lint-workflows.yml / lint-workflows
+        executor: python
+        resource_class: medium
+        steps:
+            - checkout
+            - setup-uv
+            - run:
+                  name: Lint workflows
+                  command: ./bin/hogli lint:workflows
+
+    openapi-codegen-tests:
+        # Source: ci-openapi-codegen.yml / test
+        executor: node
+        resource_class: medium
+        steps:
+            - checkout
+            - pnpm-install:
+                  cache-key-suffix: openapi-codegen
+            - run:
+                  name: Run tests
+                  command: pnpm --filter=@posthog/openapi-codegen test
+
+    paths-filter-action-verify:
+        # Source: ci-paths-filter.yml / verify. Still meaningful: the vendored
+        # action stays in the repo and the CircleCI matcher is written against
+        # its documented semantics.
+        executor: node
+        resource_class: medium
+        working_directory: ~/project/.github/actions/paths-filter
+        steps:
+            - checkout:
+                  path: ~/project
+            - run:
+                  name: Install dependencies
+                  command: npm ci
+            - run:
+                  name: Typecheck
+                  command: npx tsc --noEmit
+            - run:
+                  name: Test
+                  command: npx jest
+            - run:
+                  name: Verify dist/index.js matches src
+                  command: |
+                      npx ncc build src/main.ts -o dist_check
+                      if ! diff -q dist_check/index.js dist/index.js; then
+                          echo "dist/index.js is out of date. Run 'npx ncc build src/main.ts -o dist' and commit the result."
+                          exit 1
+                      fi
+
+    backend-shadow-drift:
+        # Source: ci-backend-shadow-drift.yml / check
+        docker:
+            - image: cimg/base:current
+        resource_class: small
+        steps:
+            - checkout
+            - run:
+                  name: Backend CI shadows remain synchronized
+                  command: |
+                      if [ ! -f .depot/workflows/ci-backend.yml ]; then
+                          echo "No Depot shadow present — nothing to compare"
+                          exit 0
+                      fi
+                      diff -u .github/workflows/ci-backend.yml .depot/workflows/ci-backend.yml
+
+    test-quarantine-check:
+        # Source: test-quarantine.yml / check-quarantine
+        executor: python
+        resource_class: medium
+        steps:
+            - checkout
+            - setup-uv
+            - run:
+                  name: Check quarantine file
+                  command: |
+                      PYTHONPATH=tools/hogli-commands \
+                        uv run --no-project --with click python -m hogli_commands.quarantine.cli check
+
+    survey-sdk-check:
+        # Source: ci-survey-sdk-check.yml. Only the generated-docs check is
+        # ported; the reminder-comment leg writes a PR comment.
+        executor: node
+        resource_class: medium
+        steps:
+            - checkout
+            - pnpm-install:
+                  cache-key-suffix: frontend
+            - run:
+                  name: Check SDK docs are up to date
+                  command: |
+                      pnpm --filter=@posthog/frontend build:survey-sdk-docs
+                      if ! git diff --exit-code docs/published/docs/surveys/sdk-feature-support.mdx; then
+                          echo "Generated docs are out of date."
+                          echo "Run 'pnpm --filter=@posthog/frontend build:survey-sdk-docs' and commit the changes."
+                          exit 1
+                      fi
+
+    dev-setup-flox:
+        # Source: ci-dev-setup.yml / flox-dev-setup
+        executor: linux-machine
+        steps:
+            - checkout
+            - run:
+                  name: Install Flox
+                  command: |
+                      curl -fsSL https://downloads.flox.dev/by-env/stable/deb/flox.x86_64-linux.deb -o /tmp/flox.deb
+                      sudo apt-get update && sudo apt-get install -y /tmp/flox.deb
+                      flox --version
+            - run:
+                  name: Activate Flox and verify dev setup
+                  no_output_timeout: 30m
+                  command: |
+                      flox activate -- bash -c '
+                        set -euo pipefail
+                        echo "--- Flox environment activated successfully ---"
+                        echo "Go:     $(go version)"
+                        echo "Node:   $(node --version)"
+                        echo "Python: $(python --version 2>&1)"
+                        echo "Rust:   $(rustc --version)"
+                      '
+            - run:
+                  name: Check lockfile consistency
+                  command: |
+                      if ! git diff --exit-code -- uv.lock pnpm-lock.yaml; then
+                        echo "Lockfiles were modified by flox activate. Commit the updated lockfiles."
+                        exit 1
+                      fi
+
+    dev-sandbox-selftest:
+        # Source: dev-sandbox-selftest.yml / shims-selftest. The macOS `selftest`
+        # job needs a sandbox profile that only exists on macOS; see parity.
+        docker:
+            - image: cimg/base:current
+        resource_class: small
+        steps:
+            - checkout
+            - run:
+                  name: Verify dev sandbox shims routing
+                  command: bin/dev-sandbox-shims-selftest
+
+    agent-skills-check:
+        # Source: ci-agent-skills.yml / check-skills + check-embedded-skills.
+        # The release-skills leg is a publish job and is dropped.
+        executor: python-node
+        steps:
+            - checkout
+            - setup-uv
+            - pnpm-install:
+                  cache-key-suffix: skills
+            - run:
+                  name: Lint skills
+                  command: ./bin/hogli lint:skills
+            - run:
+                  name: Build skills
+                  command: ./bin/hogli build:skills
+            - run:
+                  name: Check embedded skill payloads are up to date
+                  command: |
+                      pnpm --filter=@posthog/mcp run generate-scene-tool-context
+                      if git diff --exit-code; then
+                          echo "Embedded skill payloads are up to date"
+                          exit 0
+                      fi
+                      echo "Embedded skill payloads are out of date."
+                      echo "Regenerate the scene agent-context payloads and commit the result."
+                      exit 1
+
+    # --- clickhouse ------------------------------------------------------------------ #
+
+    clickhouse-hcl-guard:
+        # Source: ci-clickhouse-hcl-schema.yml / hcl-guard. The companion
+        # cloud-compose-gate job dispatches a workflow in a private repo and is
+        # dropped; see the parity table.
+        executor: linux-machine
+        steps:
+            - checkout
+            - run:
+                  name: Install hclexp
+                  command: bash posthog/clickhouse/hcl/bin/install-hclexp
+            - run:
+                  name: HCL schema guard (validate + drift)
+                  command: bash posthog/clickhouse/hcl/check.sh
+
+    clickhouse-multinode-migrations:
+        # Source: ci-clickhouse-multinode-migrations.yml / multinode-migration-smoke
+        executor: linux-machine-xlarge
+        steps:
+            - checkout
+            - run:
+                  name: Add multinode hostnames to /etc/hosts
+                  command: |
+                      echo "127.0.0.1 clickhouse-data clickhouse-ai-events clickhouse-aux clickhouse-ops clickhouse-sessions clickhouse-logs clickhouse-ingestion-events clickhouse-ingestion-small clickhouse-ingestion-medium kafka zookeeper" | sudo tee -a /etc/hosts
+            - run:
+                  name: Install uv and Python dependencies
+                  command: |
+                      curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
+                      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+                      sudo apt-get update
+                      sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+                      export PATH="$HOME/.local/bin:$PATH"
+                      uv sync --frozen --dev
+            - run:
+                  name: Install hclexp
+                  command: bash posthog/clickhouse/hcl/bin/install-hclexp
+            - run:
+                  name: Run smoke test
+                  no_output_timeout: 25m
+                  command: tools/infra-scripts/clickhouse-multinode/multinode-migration-smoke
+            - run:
+                  name: Dump compose logs on failure
+                  when: on_fail
+                  command: docker compose -f docker-compose.multinode-clickhouse.yml logs --no-color --tail=400 || true
+
+    # --- containers ------------------------------------------------------------------- #
+
+    docker-build:
+        # Source: container-images-ci.yml / posthog_build
+        executor: linux-machine-xlarge
+        steps:
+            - checkout
+            - run:
+                  name: Build the PostHog image
+                  no_output_timeout: 45m
+                  command: docker build --progress=plain -t posthog/posthog:ci .
+
+    dockerfile-lint:
+        # Source: container-images-ci.yml / lint
+        executor: linux-machine
+        resource_class: medium
+        steps:
+            - checkout
+            - run:
+                  name: Lint changed Dockerfiles
+                  command: |
+                      git fetch --no-tags --prune origin master
+                      CHANGED=$(git diff --name-only --diff-filter=AM "$(git merge-base origin/master HEAD)"..HEAD \
+                          | grep -E '(^|/)Dockerfile(\..*)?$|\.Dockerfile$' || true)
+                      if [ -z "$CHANGED" ]; then
+                          echo "No Dockerfiles changed"
+                          exit 0
+                      fi
+                      echo "$CHANGED" | while read -r f; do
+                          docker run --rm -i hadolint/hadolint < "$f"
+                      done
+
+    dockerignore-guard:
+        # Source: container-images-ci.yml / dockerignore_guard
+        executor: linux-machine
+        resource_class: medium
+        steps:
+            - checkout
+            - run:
+                  name: Check for non-test files dropped from the image
+                  command: |
+                      git fetch --no-tags --prune origin master
+                      bin/dockerignore-drop-check "$(git merge-base origin/master HEAD)"
+
+    nodejs-container-build:
+        # Source: ci-nodejs-container.yml / build. Only the build half is
+        # ported; the registry push is a deploy step.
+        executor: linux-machine-xlarge
+        steps:
+            - checkout
+            - run:
+                  name: Build the node image
+                  no_output_timeout: 45m
+                  command: docker build --progress=plain -f Dockerfile.node -t posthog/posthog-node:ci .
+
+    # --- desktop --------------------------------------------------------------------- #
+
+    desktop-quality:
+        # Source: desktop-quality.yml / quality
+        executor: node
+        resource_class: medium
+        working_directory: ~/project/products/desktop
+        steps:
+            - checkout:
+                  path: ~/project
+            - run:
+                  name: Run Biome
+                  command: npx --yes @biomejs/biome@2.2.4 ci .
+            - run:
+                  name: Check host boundaries (apps/code must stay a thin Electron host)
+                  command: node scripts/check-host-boundaries.mjs
+
+    desktop-build:
+        # Source: desktop-build.yml / build
+        executor: node
+        working_directory: ~/project/products/desktop
+        steps:
+            - checkout:
+                  path: ~/project
+            - run:
+                  name: Install dependencies
+                  command: |
+                      corepack enable
+                      pnpm install --frozen-lockfile
+            - run:
+                  name: Build packages
+                  command: pnpm run build:deps
+            - run:
+                  name: Build code
+                  command: pnpm --filter code build
+
+    desktop-typecheck:
+        # Source: desktop-typecheck.yml / typecheck
+        executor: node
+        working_directory: ~/project/products/desktop
+        steps:
+            - checkout:
+                  path: ~/project
+            - run:
+                  name: Install dependencies
+                  command: |
+                      corepack enable
+                      pnpm install --frozen-lockfile
+            - run:
+                  name: Run type check
+                  command: pnpm run typecheck
+
+    desktop-unit-test:
+        # Source: desktop-test.yml / unit-test
+        executor: node
+        working_directory: ~/project/products/desktop
+        steps:
+            - checkout:
+                  path: ~/project
+            - run:
+                  name: Install dependencies
+                  command: |
+                      corepack enable
+                      pnpm install --frozen-lockfile
+            - run:
+                  name: Rebuild native modules for Node
+                  command: node scripts/rebuild-better-sqlite3-node.mjs
+            - run:
+                  name: Run tests
+                  command: pnpm test
+            - collect-junit:
+                  # Relative to working_directory. An absolute `~/...` path would
+                  # reach the Trunk uploader inside double quotes, where the shell
+                  # does not expand the tilde (SC2088).
+                  path: junit-results
+
+    desktop-integration-test:
+        # Source: desktop-test.yml / integration-test (macos-latest)
+        executor: macos
+        working_directory: ~/project/products/desktop
+        steps:
+            - checkout:
+                  path: ~/project
+            - run:
+                  name: Install dependencies
+                  command: |
+                      corepack enable
+                      pnpm install --frozen-lockfile
+            - run:
+                  name: Build packages
+                  command: pnpm run build:deps
+            - run:
+                  name: Package Electron app
+                  no_output_timeout: 30m
+                  command: pnpm --filter code run package
+            - run:
+                  name: Install Playwright
+                  command: pnpm --filter code exec playwright install --with-deps chromium
+            - run:
+                  name: Run E2E smoke tests
+                  no_output_timeout: 25m
+                  command: pnpm --filter code run test:e2e
+            - run:
+                  name: Run web E2E smoke tests
+                  no_output_timeout: 25m
+                  command: pnpm run test:e2e:web
+            - store_artifacts:
+                  path: ~/project/products/desktop/playwright-report
+                  destination: desktop-playwright-report
+
+    desktop-e2e:
+        # Source: desktop-test.yml / e2e
+        executor: node
+        working_directory: ~/project/products/desktop
+        steps:
+            - checkout:
+                  path: ~/project
+            - run:
+                  name: Install dependencies
+                  command: |
+                      corepack enable
+                      pnpm install --frozen-lockfile
+            - run:
+                  name: Build agent dependencies
+                  command: |
+                      pnpm --filter @posthog/shared run build
+                      pnpm --filter @posthog/git run build
+                      pnpm --filter @posthog/enricher run build
+            - run:
+                  name: Download native codex binary
+                  command: node apps/code/scripts/download-binaries.mjs || echo "codex binary download failed; the binary guard test will red the run"
+            - run:
+                  name: Run live e2e (both adapters)
+                  no_output_timeout: 30m
+                  command: pnpm --filter agent run test:e2e
+
+    desktop-backend-coupling:
+        # Source: desktop-ci.yml / backend-coupling. The repo's own gate script
+        # reads the changed-file list from the GitHub pull-request API and hard-
+        # requires REPOSITORY and PR_NUMBER, so it cannot run here; the CircleCI
+        # script applies the identical path rules to a git diff instead.
+        docker:
+            - image: cimg/base:current
+        resource_class: small
+        steps:
+            - checkout
+            - run:
+                  name: Check desktop/backend separation
+                  command: |
+                      git fetch --no-tags --prune origin master
+                      BASE_REF=origin/master .circleci/scripts/check-desktop-backend-coupling.sh
+
+    # --- semgrep ------------------------------------------------------------------- #
+
+    semgrep:
+        # Source: ci-security.yaml / semgrep-*. One parameterized job stands in
+        # for the nine near-identical source jobs.
+        parameters:
+            scan-name:
+                type: string
+            args:
+                type: string
+            severity:
+                type: string
+                default: ''
+        executor: linux-machine
+        resource_class: medium
+        environment:
+            SEMGREP_IMAGE: returntocorp/semgrep:1.97.0
+        steps:
+            - checkout
+            - run:
+                  name: Log in to Docker Hub
+                  command: |
+                      if [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+                          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin
+                      else
+                          echo "No DOCKERHUB_TOKEN set — pulling anonymously, subject to rate limits"
+                      fi
+            - semgrep-scan:
+                  args: << parameters.args >>
+                  severity: << parameters.severity >>
+
+    semgrep-rule-tests:
+        # Source: ci-security.yaml / semgrep-test-rules
+        executor: linux-machine
+        resource_class: medium
+        environment:
+            SEMGREP_IMAGE: returntocorp/semgrep:1.97.0
+        steps:
+            - checkout
+            - run:
+                  name: Test the semgrep rules themselves
+                  command: |
+                      docker run --rm -v "$PWD:/src" -w /src \
+                          -e SEMGREP_ENABLE_VERSION_CHECK=false \
+                          "$SEMGREP_IMAGE" semgrep --test .semgrep/
+
+    # --- infrastructure ------------------------------------------------------------- #
+
+    terragrunt-plan:
+        # Source: terragrunt-posthog.yaml / setup + terragrunt. The source fans
+        # out one job per service from a runtime matrix; this runs the whole
+        # tree in one job.
+        docker:
+            - image: alpine/terragrunt:1.9.8
+        resource_class: medium
+        steps:
+            - checkout
+            - run:
+                  name: Terragrunt validate
+                  command: cd terraform && terragrunt run-all validate --terragrunt-non-interactive
+
+workflows:
+    # Always on. Also guarantees the pipeline is never empty — a continuation
+    # config whose workflows are all gated off is rejected.
+    always:
+        jobs:
+            - shellcheck
+            - desktop-backend-coupling
+            - ci-complete:
+                  requires:
+                      - shellcheck
+                      - desktop-backend-coupling
+
+    python:
+        when: << pipeline.parameters.run-python >>
+        jobs:
+            - python-code-quality
+
+    backend:
+        when: << pipeline.parameters.run-backend >>
+        jobs:
+            - backend-repo-checks
+            - backend-check-migrations
+            - backend-django-tests:
+                  name: backend-django-tests-core
+                  segment: core
+                  shards: 6
+                  requires: [backend-check-migrations]
+            - backend-django-tests:
+                  name: backend-django-tests-temporal
+                  segment: temporal
+                  shards: 3
+                  requires: [backend-check-migrations]
+            - backend-product-tests
+
+    migrations:
+        when:
+            and:
+                - << pipeline.parameters.run-migrations >>
+                - not: << pipeline.parameters.run-backend >>
+        jobs:
+            # The backend workflow already runs this job when it is on; without
+            # the `not` guard a migration-only change would run it twice.
+            - backend-check-migrations
+
+    openapi-types:
+        when: << pipeline.parameters.run-openapi-types >>
+        jobs:
+            - backend-check-openapi-types
+
+    product-yamls:
+        when: << pipeline.parameters.run-product-yamls >>
+        jobs:
+            - backend-validate-product-yamls
+
+    frontend:
+        when: << pipeline.parameters.run-frontend >>
+        jobs:
+            - frontend-format
+
+    frontend-code:
+        when: << pipeline.parameters.run-frontend-code >>
+        jobs:
+            - frontend-typescript-checks
+            - frontend-bundle-size
+            - frontend-jest:
+                  name: frontend-jest-foss
+                  segment: FOSS
+            - frontend-jest:
+                  name: frontend-jest-ee
+                  segment: EE
+
+    replay-shared:
+        when: << pipeline.parameters.run-replay-shared >>
+        jobs:
+            - frontend-jest-replay-shared
+
+    storybook:
+        when: << pipeline.parameters.run-storybook >>
+        jobs:
+            - storybook-build
+            - storybook-visual-regression:
+                  name: storybook-visual-regression-chromium
+                  browser: chromium
+                  requires: [storybook-build]
+            - storybook-visual-regression:
+                  name: storybook-visual-regression-webkit
+                  browser: webkit
+                  requires: [storybook-build]
+
+    e2e:
+        when: << pipeline.parameters.run-e2e >>
+        jobs:
+            - e2e-playwright
+
+    nodejs:
+        when: << pipeline.parameters.run-nodejs >>
+        jobs:
+            - nodejs-lint
+            - nodejs-build
+            - nodejs-tests
+            - nodejs-rust-ingestion-e2e
+
+    rust:
+        when: << pipeline.parameters.run-rust >>
+        jobs:
+            - rust-build
+            - rust-lint
+            - rust-test
+            - rust-personhog-gate
+
+    rust-flags-integration:
+        when: << pipeline.parameters.run-rust-flags-integration >>
+        jobs:
+            - rust-flags-integration
+
+    proto:
+        when: << pipeline.parameters.run-proto >>
+        jobs:
+            - proto-lint
+            - proto-breaking
+            - proto-python-codegen
+            - proto-node-codegen
+
+    hog:
+        when: << pipeline.parameters.run-hog >>
+        jobs:
+            - hog-tests
+
+    dagster:
+        when: << pipeline.parameters.run-dagster >>
+        jobs:
+            - dagster-tests
+
+    mcp:
+        when: << pipeline.parameters.run-mcp >>
+        jobs:
+            - mcp-build
+            - mcp-unit-tests
+            - mcp-integration-tests
+
+    mcp-ui-apps:
+        when: << pipeline.parameters.run-mcp-ui-apps >>
+        jobs:
+            - mcp-ui-apps
+
+    llm-gateway:
+        when: << pipeline.parameters.run-llm-gateway >>
+        jobs:
+            - llm-gateway-tests
+
+    oauth-proxy:
+        when: << pipeline.parameters.run-oauth-proxy >>
+        jobs:
+            - oauth-proxy-tests
+
+    agent-proxy:
+        when: << pipeline.parameters.run-agent-proxy >>
+        jobs:
+            - agent-proxy-checks
+
+    integration-service:
+        when: << pipeline.parameters.run-integration-service >>
+        jobs:
+            - integration-service-checks
+
+    agent-skills:
+        when: << pipeline.parameters.run-agent-skills >>
+        jobs:
+            - agent-skills-check
+
+    livestream:
+        when: << pipeline.parameters.run-livestream >>
+        jobs:
+            - livestream-tests
+
+    livestream-tui:
+        when: << pipeline.parameters.run-livestream-tui >>
+        jobs:
+            - livestream-tui-build
+
+    hobby-installer:
+        when: << pipeline.parameters.run-hobby-installer >>
+        jobs:
+            - hobby-installer-build
+
+    phrocs:
+        when: << pipeline.parameters.run-phrocs >>
+        jobs:
+            - phrocs-tests
+
+    cli:
+        when: << pipeline.parameters.run-cli >>
+        jobs:
+            - cli-tests
+            - cli-clippy
+            - cli-format
+            - cli-api-release-bundle
+
+    deltalite-python:
+        when: << pipeline.parameters.run-deltalite-python >>
+        jobs:
+            - deltalite-python-tests
+
+    scripts-tests:
+        when: << pipeline.parameters.run-scripts-tests >>
+        jobs:
+            - scripts-tests
+
+    actionlint:
+        when: << pipeline.parameters.run-actionlint >>
+        jobs:
+            - actionlint
+
+    lint-workflows:
+        when: << pipeline.parameters.run-lint-workflows >>
+        jobs:
+            - lint-workflows
+
+    openapi-codegen:
+        when: << pipeline.parameters.run-openapi-codegen >>
+        jobs:
+            - openapi-codegen-tests
+
+    paths-filter-action:
+        when: << pipeline.parameters.run-paths-filter-action >>
+        jobs:
+            - paths-filter-action-verify
+
+    backend-shadow-drift:
+        when: << pipeline.parameters.run-backend-shadow-drift >>
+        jobs:
+            - backend-shadow-drift
+
+    test-quarantine:
+        when: << pipeline.parameters.run-test-quarantine >>
+        jobs:
+            - test-quarantine-check
+
+    survey-sdk-check:
+        when: << pipeline.parameters.run-survey-sdk-check >>
+        jobs:
+            - survey-sdk-check
+
+    dev-setup:
+        when: << pipeline.parameters.run-dev-setup >>
+        jobs:
+            - dev-setup-flox
+
+    dev-sandbox-selftest:
+        when: << pipeline.parameters.run-dev-sandbox-selftest >>
+        jobs:
+            - dev-sandbox-selftest
+
+    clickhouse-hcl:
+        when: << pipeline.parameters.run-clickhouse-hcl >>
+        jobs:
+            - clickhouse-hcl-guard
+
+    clickhouse-multinode:
+        when: << pipeline.parameters.run-clickhouse-multinode >>
+        jobs:
+            - clickhouse-multinode-migrations
+
+    container-build:
+        when: << pipeline.parameters.run-container-build >>
+        jobs:
+            - docker-build
+
+    dockerfile-lint:
+        when: << pipeline.parameters.run-dockerfile-lint >>
+        jobs:
+            - dockerfile-lint
+
+    dockerignore-guard:
+        when: << pipeline.parameters.run-dockerignore-guard >>
+        jobs:
+            - dockerignore-guard
+
+    nodejs-container:
+        when: << pipeline.parameters.run-nodejs-container >>
+        jobs:
+            - nodejs-container-build
+
+    desktop-quality:
+        when: << pipeline.parameters.run-desktop-quality >>
+        jobs:
+            - desktop-quality
+
+    desktop-code:
+        when: << pipeline.parameters.run-desktop-code >>
+        jobs:
+            - desktop-build
+            - desktop-typecheck
+            - desktop-unit-test
+            - desktop-integration-test
+
+    desktop-packages:
+        when: << pipeline.parameters.run-desktop-packages >>
+        jobs:
+            - desktop-e2e
+
+    terragrunt:
+        when: << pipeline.parameters.run-terragrunt >>
+        jobs:
+            - terragrunt-plan
+
+    semgrep-python:
+        when: << pipeline.parameters.run-semgrep-python >>
+        jobs:
+            - semgrep:
+                  name: semgrep-python
+                  scan-name: python
+                  args: >-
+                      --config p/python --config p/owasp-top-ten --config p/security-audit
+                      --config p/trailofbits --config .semgrep/rules/security
+                      --exclude-rule trailofbits.generic.redis-unencrypted-transport.redis-unencrypted-transport
+                      --exclude-rule python.django.security.audit.csrf-exempt.no-csrf-exempt
+                      --exclude-rule generic.html-templates.security.var-in-href.var-in-href
+                      --include /bin --include /common --include /ee --include /posthog
+                      --include /products --include /services/llm-gateway
+                      --include /services/stripe-mock --include /tools
+                      --exclude products/desktop --jobs 4
+
+    semgrep-go:
+        when: << pipeline.parameters.run-semgrep-go >>
+        jobs:
+            - semgrep:
+                  name: semgrep-go
+                  scan-name: go
+                  args: >-
+                      --config p/golang --config p/owasp-top-ten --config p/security-audit
+                      --config p/trailofbits --config r/go.lang.security
+                      --exclude-rule go.lang.security.audit.xss.no-fprintf-to-responsewriter.no-fprintf-to-responsewriter
+                      --include /livestream
+
+    semgrep-rust:
+        when: << pipeline.parameters.run-semgrep-rust >>
+        jobs:
+            - semgrep:
+                  name: semgrep-rust
+                  scan-name: rust
+                  args: >-
+                      --config p/rust --config p/owasp-top-ten --config p/security-audit
+                      --config p/trailofbits --config r/rust.lang.security
+                      --exclude-rule trailofbits.generic.curl-unencrypted-url.curl-unencrypted-url
+                      --exclude-rule trailofbits.generic.redis-unencrypted-transport.redis-unencrypted-transport
+                      --exclude-rule trailofbits.rs.panic-in-function-returning-result.panic-in-function-returning-result
+                      --include /cli --include /rust
+
+    semgrep-js:
+        when: << pipeline.parameters.run-semgrep-js >>
+        jobs:
+            - semgrep:
+                  name: semgrep-js
+                  scan-name: js
+                  args: >-
+                      --config .semgrep/rules/security --config p/javascript
+                      --config p/owasp-top-ten --config p/security-audit --config p/trailofbits
+                      --include /frontend --include /nodejs --include /services/agent-proxy
+                      --include /services/integration-service --include /services/mcp
+                      --include /services/oauth-proxy --include /services/stripe-app
+
+    semgrep-products-frontend:
+        when: << pipeline.parameters.run-semgrep-products-frontend >>
+        jobs:
+            - semgrep:
+                  name: semgrep-products-frontend
+                  scan-name: products-frontend
+                  args: --config .semgrep/rules/security/prefer-codegen-api.yaml --include /products
+
+    semgrep-general:
+        when: << pipeline.parameters.run-semgrep-general >>
+        jobs:
+            - semgrep:
+                  name: semgrep-general
+                  scan-name: general
+                  args: >-
+                      --config p/owasp-top-ten --config p/security-audit --config p/trailofbits
+                      --config p/github-actions
+                      --exclude-rule dockerfile.security.no-sudo-in-dockerfile.no-sudo-in-dockerfile
+                      --exclude-rule trailofbits.generic.redis-unencrypted-transport.redis-unencrypted-transport
+                      --exclude-rule trailofbits.yaml.docker-compose.port-all-interfaces.port-all-interfaces
+                      --exclude-rule yaml.github-actions.security.audit.unsafe-add-mask-workflow-command.unsafe-add-mask-workflow-command
+                      --exclude /cli --exclude /common --exclude /ee --exclude /frontend
+                      --exclude /livestream --exclude /nodejs --exclude /posthog
+                      --exclude /products --exclude /rust --exclude /.semgrep
+                      --exclude /docs --exclude /services --jobs 4
+
+    semgrep-devex:
+        when: << pipeline.parameters.run-semgrep-devex >>
+        jobs:
+            - semgrep:
+                  name: semgrep-devex
+                  scan-name: devex
+                  severity: ERROR
+                  args: --config .semgrep/rules/devex/
+
+    semgrep-desktop:
+        when: << pipeline.parameters.run-semgrep-desktop >>
+        jobs:
+            - semgrep:
+                  name: semgrep-desktop
+                  scan-name: desktop
+                  args: --config p/javascript --config p/python --include /products/desktop
+
+    semgrep-test-rules:
+        when: << pipeline.parameters.run-semgrep-test-rules >>
+        jobs:
+            - semgrep-rule-tests

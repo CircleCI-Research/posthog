@@ -1,0 +1,74 @@
+# PostHog CI — setup stage.
+#
+# GitHub Actions gives every `ci-*.yml` workflow its own `changes` job that runs
+# the vendored paths-filter action and hands boolean outputs to the jobs below
+# it. CircleCI has no per-job `when` inside a workflow, so that whole pattern
+# collapses into one setup pipeline: this file computes every filter once and
+# continues into .circleci/continue-config.yml with the results as pipeline
+# parameters. Each parameter then gates one whole workflow there.
+#
+# Contract: .circleci/scripts/compute-pipeline-parameters.py emits exactly the
+# parameter set that continue-config.yml declares. The continuation API rejects
+# an undeclared parameter, so the two lists must not drift.
+
+version: 2.1
+setup: true
+
+orbs:
+    continuation: circleci/continuation@1.0.0
+
+parameters:
+    # Set by the "Rerun with all checks" API call / scheduled master runs to skip
+    # path narrowing. Mirrors `if: github.event_name != 'push'` on the source
+    # `changes` jobs, which run every check on a master push.
+    force-all-checks:
+        type: boolean
+        default: false
+
+jobs:
+    decide:
+        docker:
+            - image: cimg/python:3.13
+        resource_class: small
+        steps:
+            - checkout
+            - run:
+                  name: Install filter dependencies
+                  command: pip install --quiet 'PyYAML==6.0.3'
+            - run:
+                  name: Self-test the path matcher
+                  # Runs before the matcher decides anything. A broken matcher
+                  # that silently returns false would skip every downstream
+                  # check and report the pipeline green.
+                  command: python .circleci/scripts/compute-pipeline-parameters.py --selftest
+            - run:
+                  name: Fetch the base branch
+                  command: |
+                      if [ "$CIRCLE_BRANCH" = "master" ]; then
+                          echo "On master — no base branch needed"
+                          exit 0
+                      fi
+                      git fetch --no-tags --prune origin master
+            - run:
+                  name: Compute pipeline parameters
+                  command: |
+                      set -euo pipefail
+                      mkdir -p /tmp/params
+                      if [ "$CIRCLE_BRANCH" = "master" ] || [ "<< pipeline.parameters.force-all-checks >>" = "true" ]; then
+                          python .circleci/scripts/compute-pipeline-parameters.py \
+                              --all-true --output /tmp/params/pipeline-parameters.json
+                      else
+                          python .circleci/scripts/compute-pipeline-parameters.py \
+                              --base origin/master --output /tmp/params/pipeline-parameters.json
+                      fi
+            - store_artifacts:
+                  path: /tmp/params/pipeline-parameters.json
+                  destination: pipeline-parameters.json
+            - continuation/continue:
+                  configuration_path: .circleci/continue-config.yml
+                  parameters: /tmp/params/pipeline-parameters.json
+
+workflows:
+    setup:
+        jobs:
+            - decide
