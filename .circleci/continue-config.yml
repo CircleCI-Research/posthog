@@ -156,6 +156,21 @@ executors:
 # --------------------------------------------------------------------------- #
 
 commands:
+    install-brotli:
+        description: >
+            bin/download-mmdb decompresses the MaxMind archive with `brotli`.
+            GitHub's ubuntu-latest runners carry it preinstalled; the CircleCI
+            images do not, so every job that calls that script needs it first.
+            Installed here rather than patched into the script, so the
+            repository's own tooling is left untouched.
+        steps:
+            - run:
+                  name: Install brotli
+                  command: |
+                      if ! command -v brotli >/dev/null 2>&1; then
+                          sudo apt-get update -qq
+                          sudo apt-get install -y --no-install-recommends brotli
+                      fi
     setup-uv:
         description: Install uv and sync the Python project, matching ci-python.yml.
         parameters:
@@ -468,6 +483,7 @@ jobs:
         steps:
             - checkout
             - setup-uv
+            - install-brotli
             - run:
                   name: Download GeoIP database
                   command: ./bin/download-mmdb
@@ -737,6 +753,7 @@ jobs:
                       sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
                       export PATH="$HOME/.local/bin:$PATH"
                       uv sync --frozen --dev
+            - install-brotli
             - run:
                   name: Set up needed files
                   command: |
@@ -820,6 +837,7 @@ jobs:
                       uv sync --frozen --dev
             - pnpm-install:
                   cache-key-suffix: turbo
+            - install-brotli
             - run:
                   name: Set up needed files
                   command: |
@@ -1237,6 +1255,7 @@ jobs:
                       sudo apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
                       export PATH="$HOME/.local/bin:$PATH"
                       uv sync --frozen --dev
+            - install-brotli
             - run:
                   name: Download MaxMind Database
                   command: ./bin/download-mmdb
@@ -1387,6 +1406,7 @@ jobs:
                         sqlx migrate run --source persons_migrations/
                       DATABASE_URL='postgres://posthog:posthog@localhost:5432/test_posthog' \
                         sqlx migrate run --source behavioral_cohorts_migrations/
+            - install-brotli
             - run:
                   name: Download MaxMind Database
                   command: ./bin/download-mmdb
@@ -1473,6 +1493,7 @@ jobs:
                   name: Build Rust services
                   no_output_timeout: 30m
                   command: cd rust && cargo build -p feature-flags -p personhog-replica -p personhog-router
+            - install-brotli
             - run:
                   name: Download MaxMind Database
                   command: ./bin/download-mmdb
@@ -1751,6 +1772,7 @@ jobs:
                       uv sync --frozen --dev
             - pnpm-install:
                   cache-key-suffix: mcp
+            - install-brotli
             - run:
                   name: Set up needed files
                   command: |

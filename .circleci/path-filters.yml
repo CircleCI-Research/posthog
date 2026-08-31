@@ -19,744 +19,744 @@
 
 # ci-actionlint.yml -> on.pull_request.paths
 run-actionlint:
-- .github/workflows/**
-- .github/actions/**
-- .github/actionlint.yaml
+    - .github/workflows/**
+    - .github/actions/**
+    - .github/actionlint.yaml
 
 # ci-agent-proxy.yml -> paths-filter `agent_proxy`
 run-agent-proxy:
-- services/agent-proxy/**
-- .github/workflows/ci-agent-proxy.yml
+    - services/agent-proxy/**
+    - .github/workflows/ci-agent-proxy.yml
 
 # ci-agent-skills.yml -> paths-filter `skills`
 run-agent-skills:
-- products/*/skills/**
-- products/*/backend/max_tools.py
-- products/posthog_ai/**
-- .github/workflows/ci-agent-skills.yml
-- services/mcp/schema/**
-- '!products/posthog_ai/frontend/**'
+    - products/*/skills/**
+    - products/*/backend/max_tools.py
+    - products/posthog_ai/**
+    - .github/workflows/ci-agent-skills.yml
+    - services/mcp/schema/**
+    - '!products/posthog_ai/frontend/**'
 
 # ci-backend.yml -> paths-filter `backend`
 run-backend:
-- ee/**/*
-- '!ee/frontend/**'
-- common/__init__.py
-- common/hogql_parser/**
-- common/hogvm/**
-- common/ingestion/**
-- common/migration_utils/**
-- common/plugin_transpiler/**
-- posthog/**/*
-- products/**/backend/**/*
-- products/**/*.py
-- '!products/desktop/**'
-- products/*/package.json
-- products/canvas/packages/canvas_builder/**
-- bin/build-schema-latest-versions.py
-- bin/build-taxonomy-json.py
-- bin/check_uv_python_compatibility.py
-- bin/find_python_dependencies.py
-- bin/unit_metrics.py
-- pyproject.toml
-- uv.lock
-- requirements.txt
-- requirements-dev.txt
-- mypy.ini
-- pytest.ini
-- conftest.py
-- .test_durations
-- .test_quarantine.json
-- tach.toml
-- frontend/src/queries/schema.json
-- rust/feature-flags/src/properties/property_models.rs
-- frontend/src/products.json
-- products/*/manifest.tsx
-- tools/hogli/**
-- hogli.yaml
-- tools/hogli-commands/hogli_commands/db_schema.py
-- tools/hogli-commands/hogli_commands/prechecks.py
-- tools/hogli-commands/hogli_commands/telemetry_props.py
-- tools/hogli-commands/hogli_commands/hint_hook.py
-- tools/hogli-commands/hogli_commands/hints.py
-- tools/hogli-commands/hogli_commands/product/**
-- tools/hogli-commands/hogli_commands/product_structure.yaml
-- products/isolation_baseline.txt
-- .github/workflows/ci-backend.yml
-- .github/clickhouse-versions.json
-- docker-compose.dev.yml
-- docker-compose.profiles.yml
-- docker-compose.base.yml
-- bin/wait-for-docker
-- bin/ci-wait-for-docker
-- frontend/public/email/*
-- docker/clickhouse/**
-- '!**/*.md'
-- '!**/*.mdx'
+    - ee/**/*
+    - '!ee/frontend/**'
+    - common/__init__.py
+    - common/hogql_parser/**
+    - common/hogvm/**
+    - common/ingestion/**
+    - common/migration_utils/**
+    - common/plugin_transpiler/**
+    - posthog/**/*
+    - products/**/backend/**/*
+    - products/**/*.py
+    - '!products/desktop/**'
+    - products/*/package.json
+    - products/canvas/packages/canvas_builder/**
+    - bin/build-schema-latest-versions.py
+    - bin/build-taxonomy-json.py
+    - bin/check_uv_python_compatibility.py
+    - bin/find_python_dependencies.py
+    - bin/unit_metrics.py
+    - pyproject.toml
+    - uv.lock
+    - requirements.txt
+    - requirements-dev.txt
+    - mypy.ini
+    - pytest.ini
+    - conftest.py
+    - .test_durations
+    - .test_quarantine.json
+    - tach.toml
+    - frontend/src/queries/schema.json
+    - rust/feature-flags/src/properties/property_models.rs
+    - frontend/src/products.json
+    - products/*/manifest.tsx
+    - tools/hogli/**
+    - hogli.yaml
+    - tools/hogli-commands/hogli_commands/db_schema.py
+    - tools/hogli-commands/hogli_commands/prechecks.py
+    - tools/hogli-commands/hogli_commands/telemetry_props.py
+    - tools/hogli-commands/hogli_commands/hint_hook.py
+    - tools/hogli-commands/hogli_commands/hints.py
+    - tools/hogli-commands/hogli_commands/product/**
+    - tools/hogli-commands/hogli_commands/product_structure.yaml
+    - products/isolation_baseline.txt
+    - .github/workflows/ci-backend.yml
+    - .github/clickhouse-versions.json
+    - docker-compose.dev.yml
+    - docker-compose.profiles.yml
+    - docker-compose.base.yml
+    - bin/wait-for-docker
+    - bin/ci-wait-for-docker
+    - frontend/public/email/*
+    - docker/clickhouse/**
+    - '!**/*.md'
+    - '!**/*.mdx'
 
 # ci-backend-shadow-drift.yml -> on.pull_request.paths
 run-backend-shadow-drift:
-- .github/workflows/ci-backend.yml
-- .depot/workflows/ci-backend.yml
-- .github/actions/paths-filter/**
-- .depot/actions/paths-filter/**
+    - .github/workflows/ci-backend.yml
+    - .depot/workflows/ci-backend.yml
+    - .github/actions/paths-filter/**
+    - .depot/actions/paths-filter/**
 
 # ci-cli.yml -> on.pull_request.paths
 run-cli:
-- cli/**
-- services/mcp/src/cli/**
-- services/mcp/src/tools/**
-- services/mcp/src/api/**
-- services/mcp/schema/**
-- services/mcp/scripts/build-cli*.ts
-- services/mcp/scripts/hono-esbuild-config.ts
-- services/mcp/package.json
-- dist-workspace.toml
-- pnpm-lock.yaml
-- .github/workflows/release.yml
-- .github/workflows/ci-cli.yml
-- .github/workflows/release-cli.yml
+    - cli/**
+    - services/mcp/src/cli/**
+    - services/mcp/src/tools/**
+    - services/mcp/src/api/**
+    - services/mcp/schema/**
+    - services/mcp/scripts/build-cli*.ts
+    - services/mcp/scripts/hono-esbuild-config.ts
+    - services/mcp/package.json
+    - dist-workspace.toml
+    - pnpm-lock.yaml
+    - .github/workflows/release.yml
+    - .github/workflows/ci-cli.yml
+    - .github/workflows/release-cli.yml
 
 # ci-clickhouse-hcl-schema.yml -> on.pull_request.paths
 run-clickhouse-hcl:
-- posthog/clickhouse/hcl/**
-- .github/workflows/ci-clickhouse-hcl-schema.yml
+    - posthog/clickhouse/hcl/**
+    - .github/workflows/ci-clickhouse-hcl-schema.yml
 
 # ci-clickhouse-multinode-migrations.yml -> on.pull_request.paths
 run-clickhouse-multinode:
-- posthog/clickhouse/migrations/**
-- posthog/settings/data_stores.py
-- posthog/clickhouse/cluster.py
-- posthog/clickhouse/client/migration_tools.py
-- docker/clickhouse/config.d/multinode/**
-- docker-compose.multinode-clickhouse.yml
-- tools/infra-scripts/clickhouse-multinode/**
-- posthog/clickhouse/hcl/**
-- .github/workflows/ci-clickhouse-multinode-migrations.yml
+    - posthog/clickhouse/migrations/**
+    - posthog/settings/data_stores.py
+    - posthog/clickhouse/cluster.py
+    - posthog/clickhouse/client/migration_tools.py
+    - docker/clickhouse/config.d/multinode/**
+    - docker-compose.multinode-clickhouse.yml
+    - tools/infra-scripts/clickhouse-multinode/**
+    - posthog/clickhouse/hcl/**
+    - .github/workflows/ci-clickhouse-multinode-migrations.yml
 
 # container-images-ci.yml -> paths-filter `build_inputs`
 run-container-build:
-- .github/workflows/container-images-ci.yml
-- .github/actions/build-n-cache-image/**
-- .dockerignore
-- pnpm-lock.yaml
-- package.json
+    - .github/workflows/container-images-ci.yml
+    - .github/actions/build-n-cache-image/**
+    - .dockerignore
+    - pnpm-lock.yaml
+    - package.json
 
 # ci-dagster.yml -> paths-filter `dagster`
 run-dagster:
-- posthog/dags/**
-- products/*/dags/**
-- posthog/clickhouse/**
-- posthog/egress/**
-- posthog/models/**
-- posthog/hogql/**
-- posthog/hogql_queries/**
-- posthog/query_cache/**
-- posthog/settings/**
-- posthog/kafka_client/**
-- posthog/session/**
-- posthog/schema.py
-- posthog/schema_enums.py
-- posthog/dataclasses.py
-- posthog/utils.py
-- posthog/errors.py
-- posthog/exceptions.py
-- posthog/exceptions_capture.py
-- posthog/metrics.py
-- posthog/git.py
-- posthog/job_owners.py
-- posthog/llm/**
-- posthog/person_db_router.py
-- posthog/persons_db.py
-- posthog/redis.py
-- posthog/storage/**
-- posthog/event_usage.py
-- posthog/products.py
-- posthog/cloud_utils.py
-- products/managed_warehouse/backend/**
-- posthog/ducklake/**
-- common/hogvm/**
-- conftest.py
-- posthog/conftest.py
-- posthog/test/**
-- ee/billing/**
-- ee/clickhouse/**
-- ee/hogai/**
-- products/analytics_platform/backend/**/*.py
-- products/cohorts/backend/**/*.py
-- products/data_modeling/backend/**/*.py
-- products/data_warehouse/backend/**/*.py
-- products/warehouse_sources/backend/types.py
-- products/warehouse_sources/backend/facade/**/*.py
-- products/warehouse_sources/backend/models/**/*.py
-- products/error_tracking/backend/**/*.py
-- products/event_definitions/backend/**/*.py
-- products/feature_flags/backend/**/*.py
-- products/growth/backend/**/*.py
-- products/signals/backend/**/*.py
-- products/marketing_analytics/backend/**/*.py
-- products/ai_observability/backend/**/*.py
-- products/posthog_ai/backend/**/*.py
-- products/revenue_analytics/backend/**/*.py
-- products/web_analytics/backend/**/*.py
-- .github/workflows/ci-dagster.yml
-- tools/dagster_test_selection.py
-- tools/test_dagster_test_selection.py
-- .github/clickhouse-versions.json
-- .github/actions/setup-sqlx-cli/**
-- bin/ci-wait-for-docker
-- bin/wait-for-docker
-- docker-compose.base.yml
-- docker-compose.dev.yml
-- docker-compose.profiles.yml
-- docker/postgres-init-scripts/**
-- rust/persons_migrations/**
-- manage.py
-- pytest.ini
-- pyproject.toml
-- uv.lock
-- tools/hogli/**
-- hogli.yaml
-- tools/hogli-commands/hogli_commands/db_schema.py
-- tools/hogli-commands/hogli_commands/prechecks.py
-- tools/hogli-commands/hogli_commands/telemetry_props.py
-- tools/hogli-commands/hogli_commands/hint_hook.py
-- tools/hogli-commands/hogli_commands/hints.py
+    - posthog/dags/**
+    - products/*/dags/**
+    - posthog/clickhouse/**
+    - posthog/egress/**
+    - posthog/models/**
+    - posthog/hogql/**
+    - posthog/hogql_queries/**
+    - posthog/query_cache/**
+    - posthog/settings/**
+    - posthog/kafka_client/**
+    - posthog/session/**
+    - posthog/schema.py
+    - posthog/schema_enums.py
+    - posthog/dataclasses.py
+    - posthog/utils.py
+    - posthog/errors.py
+    - posthog/exceptions.py
+    - posthog/exceptions_capture.py
+    - posthog/metrics.py
+    - posthog/git.py
+    - posthog/job_owners.py
+    - posthog/llm/**
+    - posthog/person_db_router.py
+    - posthog/persons_db.py
+    - posthog/redis.py
+    - posthog/storage/**
+    - posthog/event_usage.py
+    - posthog/products.py
+    - posthog/cloud_utils.py
+    - products/managed_warehouse/backend/**
+    - posthog/ducklake/**
+    - common/hogvm/**
+    - conftest.py
+    - posthog/conftest.py
+    - posthog/test/**
+    - ee/billing/**
+    - ee/clickhouse/**
+    - ee/hogai/**
+    - products/analytics_platform/backend/**/*.py
+    - products/cohorts/backend/**/*.py
+    - products/data_modeling/backend/**/*.py
+    - products/data_warehouse/backend/**/*.py
+    - products/warehouse_sources/backend/types.py
+    - products/warehouse_sources/backend/facade/**/*.py
+    - products/warehouse_sources/backend/models/**/*.py
+    - products/error_tracking/backend/**/*.py
+    - products/event_definitions/backend/**/*.py
+    - products/feature_flags/backend/**/*.py
+    - products/growth/backend/**/*.py
+    - products/signals/backend/**/*.py
+    - products/marketing_analytics/backend/**/*.py
+    - products/ai_observability/backend/**/*.py
+    - products/posthog_ai/backend/**/*.py
+    - products/revenue_analytics/backend/**/*.py
+    - products/web_analytics/backend/**/*.py
+    - .github/workflows/ci-dagster.yml
+    - tools/dagster_test_selection.py
+    - tools/test_dagster_test_selection.py
+    - .github/clickhouse-versions.json
+    - .github/actions/setup-sqlx-cli/**
+    - bin/ci-wait-for-docker
+    - bin/wait-for-docker
+    - docker-compose.base.yml
+    - docker-compose.dev.yml
+    - docker-compose.profiles.yml
+    - docker/postgres-init-scripts/**
+    - rust/persons_migrations/**
+    - manage.py
+    - pytest.ini
+    - pyproject.toml
+    - uv.lock
+    - tools/hogli/**
+    - hogli.yaml
+    - tools/hogli-commands/hogli_commands/db_schema.py
+    - tools/hogli-commands/hogli_commands/prechecks.py
+    - tools/hogli-commands/hogli_commands/telemetry_props.py
+    - tools/hogli-commands/hogli_commands/hint_hook.py
+    - tools/hogli-commands/hogli_commands/hints.py
 
 # ci-deltalite-python.yml -> on.pull_request.paths
 run-deltalite-python:
-- rust/deltalite/**
-- .github/workflows/ci-deltalite-python.yml
-- pyproject.toml
-- uv.lock
+    - rust/deltalite/**
+    - .github/workflows/ci-deltalite-python.yml
+    - pyproject.toml
+    - uv.lock
 
 # desktop-build.yml -> paths-filter `code`
 run-desktop-code:
-- products/desktop/**
-- '!products/desktop/**/*.md'
-- '!products/desktop/docs/**'
-- '!products/desktop/.vscode/**'
-- '!products/desktop/.claude/**'
-- '!products/desktop/.husky/**'
-- '!products/desktop/LICENSE'
-- '!products/desktop/.gitignore'
-- '!products/desktop/.env.example'
+    - products/desktop/**
+    - '!products/desktop/**/*.md'
+    - '!products/desktop/docs/**'
+    - '!products/desktop/.vscode/**'
+    - '!products/desktop/.claude/**'
+    - '!products/desktop/.husky/**'
+    - '!products/desktop/LICENSE'
+    - '!products/desktop/.gitignore'
+    - '!products/desktop/.env.example'
 
 # desktop-test.yml -> paths-filter `packages`
 run-desktop-packages:
-- products/desktop/packages/**
+    - products/desktop/packages/**
 
 # desktop-quality.yml -> paths-filter `code`
 run-desktop-quality:
-- products/desktop/**
-- '!products/desktop/**/*.md'
-- '!products/desktop/docs/**'
-- '!products/desktop/.husky/**'
-- '!products/desktop/LICENSE'
-- '!products/desktop/.gitignore'
-- '!products/desktop/.env.example'
+    - products/desktop/**
+    - '!products/desktop/**/*.md'
+    - '!products/desktop/docs/**'
+    - '!products/desktop/.husky/**'
+    - '!products/desktop/LICENSE'
+    - '!products/desktop/.gitignore'
+    - '!products/desktop/.env.example'
 
 # dev-sandbox-selftest.yml -> on.pull_request.paths
 run-dev-sandbox-selftest:
-- bin/dev-sandbox
-- bin/dev-sandbox.sb
-- bin/dev-sandbox-selftest
-- bin/dev-sandbox-shims
-- bin/dev-sandbox-shims-selftest
-- .github/workflows/dev-sandbox-selftest.yml
+    - bin/dev-sandbox
+    - bin/dev-sandbox.sb
+    - bin/dev-sandbox-selftest
+    - bin/dev-sandbox-shims
+    - bin/dev-sandbox-shims-selftest
+    - .github/workflows/dev-sandbox-selftest.yml
 
 # ci-dev-setup.yml -> on.pull_request.paths
 run-dev-setup:
-- .flox/**
-- .github/workflows/ci-dev-setup.yml
-- bin/start
-- pyproject.toml
-- uv.lock
-- pnpm-lock.yaml
-- package.json
+    - .flox/**
+    - .github/workflows/ci-dev-setup.yml
+    - bin/start
+    - pyproject.toml
+    - uv.lock
+    - pnpm-lock.yaml
+    - package.json
 
 # container-images-ci.yml -> paths-filter `dockerfiles`
 run-dockerfile-lint:
-- added|modified:
-  - '**/Dockerfile'
-  - '**/*.Dockerfile'
-  - '**/Dockerfile.*'
+    - added|modified:
+          - '**/Dockerfile'
+          - '**/*.Dockerfile'
+          - '**/Dockerfile.*'
 
 # container-images-ci.yml -> paths-filter `dockerignore`
 run-dockerignore-guard:
-- .dockerignore
+    - .dockerignore
 
 # ci-e2e-playwright.yml -> paths-filter `shouldRun`
 run-e2e:
-- playwright/**
-- products/*/frontend/e2e/**
-- .github/workflows/ci-e2e-playwright.yml
-- ee/**
-- posthog/!(temporal/**)/**
-- bin/*
-- frontend/**/*
-- package.json
-- pnpm-lock.yaml
-- uv.lock
-- .github/clickhouse-versions.json
-- docker-compose.dev.yml
-- Dockerfile
-- tools/playwright_spec_selection.py
-- tools/playwright_area_map.json
-- tools/test_playwright_spec_selection.py
-- '!**/*.md'
-- '!**/*.mdx'
-- '!posthog/**/test_*.py'
-- '!posthog/**/conftest.py'
-- '!ee/**/test_*.py'
-- '!ee/**/conftest.py'
+    - playwright/**
+    - products/*/frontend/e2e/**
+    - .github/workflows/ci-e2e-playwright.yml
+    - ee/**
+    - posthog/!(temporal/**)/**
+    - bin/*
+    - frontend/**/*
+    - package.json
+    - pnpm-lock.yaml
+    - uv.lock
+    - .github/clickhouse-versions.json
+    - docker-compose.dev.yml
+    - Dockerfile
+    - tools/playwright_spec_selection.py
+    - tools/playwright_area_map.json
+    - tools/test_playwright_spec_selection.py
+    - '!**/*.md'
+    - '!**/*.mdx'
+    - '!posthog/**/test_*.py'
+    - '!posthog/**/conftest.py'
+    - '!ee/**/test_*.py'
+    - '!ee/**/conftest.py'
 
 # ci-frontend.yml -> paths-filter `frontend`
 run-frontend:
-- bin/**
-- frontend/**
-- ee/frontend/**
-- common/esbuilder/**
-- packages/**
-- products/**/*.ts
-- products/**/*.tsx
-- products/**/*.json
-- '!products/desktop/**'
-- '!.github/workflows/desktop-*.yml'
-- '!.github/actions/desktop-*/**'
-- '!.github/scripts/desktop/**'
-- playwright/**
-- docs/**/*.tsx
-- .github/workflows/ci-frontend.yml
-- .oxlintrc.json
-- .oxfmtrc*
-- babel.config.js
-- package.json
-- pnpm-lock.yaml
-- jest.*.ts
-- tsconfig.json
-- tsconfig.*.json
-- webpack.config.js
-- stylelint*
-- '**/*.md'
-- '**/*.mdx'
-- '**/*.yaml'
-- '**/*.yml'
-- .config/.markdownlint-cli2.jsonc
-- '!services/mcp/**'
+    - bin/**
+    - frontend/**
+    - ee/frontend/**
+    - common/esbuilder/**
+    - packages/**
+    - products/**/*.ts
+    - products/**/*.tsx
+    - products/**/*.json
+    - '!products/desktop/**'
+    - '!.github/workflows/desktop-*.yml'
+    - '!.github/actions/desktop-*/**'
+    - '!.github/scripts/desktop/**'
+    - playwright/**
+    - docs/**/*.tsx
+    - .github/workflows/ci-frontend.yml
+    - .oxlintrc.json
+    - .oxfmtrc*
+    - babel.config.js
+    - package.json
+    - pnpm-lock.yaml
+    - jest.*.ts
+    - tsconfig.json
+    - tsconfig.*.json
+    - webpack.config.js
+    - stylelint*
+    - '**/*.md'
+    - '**/*.mdx'
+    - '**/*.yaml'
+    - '**/*.yml'
+    - .config/.markdownlint-cli2.jsonc
+    - '!services/mcp/**'
 
 # ci-frontend.yml -> paths-filter `frontend_code`
 run-frontend-code:
-- bin/**
-- frontend/**
-- ee/frontend/**
-- common/esbuilder/**
-- packages/**
-- products/**/*.ts
-- products/**/*.tsx
-- products/**/*.json
-- '!products/desktop/**'
-- playwright/**
-- .github/workflows/ci-frontend.yml
-- .oxlintrc.json
-- .oxfmtrc*
-- babel.config.js
-- package.json
-- pnpm-lock.yaml
-- jest.*.ts
-- tsconfig.json
-- tsconfig.*.json
-- webpack.config.js
-- stylelint*
-- '!services/mcp/**'
+    - bin/**
+    - frontend/**
+    - ee/frontend/**
+    - common/esbuilder/**
+    - packages/**
+    - products/**/*.ts
+    - products/**/*.tsx
+    - products/**/*.json
+    - '!products/desktop/**'
+    - playwright/**
+    - .github/workflows/ci-frontend.yml
+    - .oxlintrc.json
+    - .oxfmtrc*
+    - babel.config.js
+    - package.json
+    - pnpm-lock.yaml
+    - jest.*.ts
+    - tsconfig.json
+    - tsconfig.*.json
+    - webpack.config.js
+    - stylelint*
+    - '!services/mcp/**'
 
 # ci-hobby-installer.yml -> on.pull_request.paths
 run-hobby-installer:
-- .github/workflows/ci-hobby-installer.yml
-- bin/hobby-installer/**
+    - .github/workflows/ci-hobby-installer.yml
+    - bin/hobby-installer/**
 
 # ci-hog.yml -> paths-filter `hog`
 run-hog:
-- common/hogvm/**/*
-- posthog/hogql/**/*
-- bin/hog
-- bin/hoge
-- package.json
-- requirements.txt
-- requirements-dev.txt
-- .github/workflows/ci-hog.yml
+    - common/hogvm/**/*
+    - posthog/hogql/**/*
+    - bin/hog
+    - bin/hoge
+    - package.json
+    - requirements.txt
+    - requirements-dev.txt
+    - .github/workflows/ci-hog.yml
 
 # ci-integration-service.yml -> on.pull_request.paths
 run-integration-service:
-- services/integration-service/**
-- .github/workflows/ci-integration-service.yml
+    - services/integration-service/**
+    - .github/workflows/ci-integration-service.yml
 
 # ci-lint-workflows.yml -> on.pull_request.paths
 run-lint-workflows:
-- .github/workflows/**
-- .github/actions/**
-- services/**
-- tools/hogli-commands/hogli_commands/workflow_lint/**
-- hogli.yaml
+    - .github/workflows/**
+    - .github/actions/**
+    - services/**
+    - tools/hogli-commands/hogli_commands/workflow_lint/**
+    - hogli.yaml
 
 # ci-livestream.yml -> on.pull_request.paths
 run-livestream:
-- .github/workflows/ci-livestream.yml
-- livestream/**
+    - .github/workflows/ci-livestream.yml
+    - livestream/**
 
 # ci-livestream-tui.yml -> on.pull_request.paths
 run-livestream-tui:
-- .github/workflows/ci-livestream-tui.yml
-- livestream/**
+    - .github/workflows/ci-livestream-tui.yml
+    - livestream/**
 
 # ci-llm-gateway.yml -> paths-filter `llm_gateway`
 run-llm-gateway:
-- services/llm-gateway/**
-- .github/workflows/ci-llm-gateway.yml
+    - services/llm-gateway/**
+    - .github/workflows/ci-llm-gateway.yml
 
 # ci-mcp.yml -> paths-filter `mcp`
 run-mcp:
-- services/mcp/**
-- products/*/mcp/**
-- packages/llm-normalizer/**
-- posthog/**/*.py
-- ee/**/*.py
-- common/**/*.py
-- products/*/backend/**/*.py
-- frontend/src/queries/schema.json
-- common/mosaic/**
-- tools/openapi-codegen/**
-- manage.py
-- pyproject.toml
-- uv.lock
-- .nvmrc
-- pnpm-lock.yaml
-- docker-compose.base.yml
-- docker-compose.dev.yml
-- docker-compose.profiles.yml
-- bin/ci-wait-for-docker
-- bin/wait-for-docker
-- docker/postgres-init-scripts/**
-- rust/persons_migrations/**
-- posthog/user_scripts/latest_user_defined_function.xml
-- .github/actions/commit-snapshots/**
-- tools/hogli/**
-- hogli.yaml
-- tools/hogli-commands/hogli_commands/db_schema.py
-- tools/hogli-commands/hogli_commands/prechecks.py
-- tools/hogli-commands/hogli_commands/telemetry_props.py
-- tools/hogli-commands/hogli_commands/hint_hook.py
-- tools/hogli-commands/hogli_commands/hints.py
-- .github/workflows/ci-mcp.yml
-- .github/workflows/mcp-publish.yml
-- '!posthog/**/test_*.py'
-- '!posthog/**/conftest.py'
-- '!ee/**/test_*.py'
-- '!ee/**/conftest.py'
-- '!common/**/test_*.py'
-- '!common/**/conftest.py'
-- '!products/*/backend/**/test_*.py'
-- '!products/*/backend/**/*_test.py'
-- '!products/*/backend/**/conftest.py'
+    - services/mcp/**
+    - products/*/mcp/**
+    - packages/llm-normalizer/**
+    - posthog/**/*.py
+    - ee/**/*.py
+    - common/**/*.py
+    - products/*/backend/**/*.py
+    - frontend/src/queries/schema.json
+    - common/mosaic/**
+    - tools/openapi-codegen/**
+    - manage.py
+    - pyproject.toml
+    - uv.lock
+    - .nvmrc
+    - pnpm-lock.yaml
+    - docker-compose.base.yml
+    - docker-compose.dev.yml
+    - docker-compose.profiles.yml
+    - bin/ci-wait-for-docker
+    - bin/wait-for-docker
+    - docker/postgres-init-scripts/**
+    - rust/persons_migrations/**
+    - posthog/user_scripts/latest_user_defined_function.xml
+    - .github/actions/commit-snapshots/**
+    - tools/hogli/**
+    - hogli.yaml
+    - tools/hogli-commands/hogli_commands/db_schema.py
+    - tools/hogli-commands/hogli_commands/prechecks.py
+    - tools/hogli-commands/hogli_commands/telemetry_props.py
+    - tools/hogli-commands/hogli_commands/hint_hook.py
+    - tools/hogli-commands/hogli_commands/hints.py
+    - .github/workflows/ci-mcp.yml
+    - .github/workflows/mcp-publish.yml
+    - '!posthog/**/test_*.py'
+    - '!posthog/**/conftest.py'
+    - '!ee/**/test_*.py'
+    - '!ee/**/conftest.py'
+    - '!common/**/test_*.py'
+    - '!common/**/conftest.py'
+    - '!products/*/backend/**/test_*.py'
+    - '!products/*/backend/**/*_test.py'
+    - '!products/*/backend/**/conftest.py'
 
 # ci-mcp-ui-apps.yml -> paths-filter `ui-apps`
 run-mcp-ui-apps:
-- services/mcp/src/ui-apps/**
-- services/mcp/src/resources/ui-apps.generated.ts
-- services/mcp/vite.ui-apps.config.ts
-- services/mcp/scripts/build-ui-apps.ts
-- services/mcp/scripts/generate-ui-apps.ts
-- services/mcp/scripts/post-ui-apps-size-section.mjs
-- services/mcp/scripts/yaml-config-schema.ts
-- products/*/mcp/**
-- services/mcp/definitions/*.yaml
-- common/mosaic/**
-- .github/workflows/ci-mcp-ui-apps.yml
+    - services/mcp/src/ui-apps/**
+    - services/mcp/src/resources/ui-apps.generated.ts
+    - services/mcp/vite.ui-apps.config.ts
+    - services/mcp/scripts/build-ui-apps.ts
+    - services/mcp/scripts/generate-ui-apps.ts
+    - services/mcp/scripts/post-ui-apps-size-section.mjs
+    - services/mcp/scripts/yaml-config-schema.ts
+    - products/*/mcp/**
+    - services/mcp/definitions/*.yaml
+    - common/mosaic/**
+    - .github/workflows/ci-mcp-ui-apps.yml
 
 # ci-backend.yml -> paths-filter `migrations`
 run-migrations:
-- docker/clickhouse/**
-- posthog/migrations/*.py
-- products/*/backend/migrations/*.py
-- products/*/migrations/*.py
+    - docker/clickhouse/**
+    - posthog/migrations/*.py
+    - products/*/backend/migrations/*.py
+    - products/*/migrations/*.py
 
 # ci-nodejs.yml -> paths-filter `nodejs`
 run-nodejs:
-- .github/workflows/ci-nodejs.yml
-- .github/actions/setup-sqlx-cli/**
-- nodejs/**
-- rust/replay-anonymizer/**
-- rust/replay-anonymizer-node/**
-- rust/common/hogvm/**
-- '**/crosslang/**'
-- rust/common/ingestion_warnings/*.json
-- posthog/clickhouse/**
-- ee/migrations/**
-- posthog/management/commands/setup_test_environment.py
-- posthog/migrations/**
-- posthog/plugins/**
-- docker*.yml
+    - .github/workflows/ci-nodejs.yml
+    - .github/actions/setup-sqlx-cli/**
+    - nodejs/**
+    - rust/replay-anonymizer/**
+    - rust/replay-anonymizer-node/**
+    - rust/common/hogvm/**
+    - '**/crosslang/**'
+    - rust/common/ingestion_warnings/*.json
+    - posthog/clickhouse/**
+    - ee/migrations/**
+    - posthog/management/commands/setup_test_environment.py
+    - posthog/migrations/**
+    - posthog/plugins/**
+    - docker*.yml
 
 # ci-nodejs-container.yml -> on.pull_request.paths
 run-nodejs-container:
-- nodejs/**
-- common/hogvm/typescript/**
-- common/plugin_transpiler/**
-- common/esbuilder/**
-- common/replay-shared/**
-- common/replay-headless/**
-- rust/common/hogvm/**
-- rust/replay-anonymizer/**
-- rust/replay-anonymizer-node/**
-- Dockerfile.node
-- .github/workflows/ci-nodejs-container.yml
-- turbo.json
-- package.json
-- pnpm-lock.yaml
-- pnpm-workspace.yaml
+    - nodejs/**
+    - common/hogvm/typescript/**
+    - common/plugin_transpiler/**
+    - common/esbuilder/**
+    - common/replay-shared/**
+    - common/replay-headless/**
+    - rust/common/hogvm/**
+    - rust/replay-anonymizer/**
+    - rust/replay-anonymizer-node/**
+    - Dockerfile.node
+    - .github/workflows/ci-nodejs-container.yml
+    - turbo.json
+    - package.json
+    - pnpm-lock.yaml
+    - pnpm-workspace.yaml
 
 # ci-oauth-proxy.yml -> paths-filter `oauth-proxy`
 run-oauth-proxy:
-- services/oauth-proxy/**
-- .github/workflows/ci-oauth-proxy.yml
+    - services/oauth-proxy/**
+    - .github/workflows/ci-oauth-proxy.yml
 
 # ci-openapi-codegen.yml -> on.pull_request.paths
 run-openapi-codegen:
-- .github/workflows/ci-openapi-codegen.yml
-- tools/openapi-codegen/**
+    - .github/workflows/ci-openapi-codegen.yml
+    - tools/openapi-codegen/**
 
 # ci-backend.yml -> paths-filter `openapi_types`
 run-openapi-types:
-- frontend/src/generated/**/*
-- frontend/src/lib/agentScopes.generated.ts
-- products/*/frontend/generated/**/*
-- services/mcp/src/generated/**/*
-- services/mcp/src/api/generated.ts
-- tools/openapi-codegen/**/*
-- services/mcp/scripts/lib/**
-- frontend/bin/generate-openapi-types.mjs
-- frontend/src/lib/api-orval-mutator.ts
-- services/mcp/scripts/**/*
-- services/mcp/definitions/**/*.yaml
-- services/mcp/definitions/prompts/**/*.md
-- products/*/mcp/**/*.yaml
-- products/*/mcp/prompts/**/*.md
-- services/mcp/schema/tool-definitions.json
-- services/mcp/schema/tool-definitions-v2.json
-- services/mcp/src/tools/generated/**/*
-- services/mcp/schema/generated-tool-definitions.json
-- services/mcp/schema/tool-definitions-all.json
-- services/mcp/src/templates/sections/**/*
-- services/mcp/schema/exec-command-reference.md
+    - frontend/src/generated/**/*
+    - frontend/src/lib/agentScopes.generated.ts
+    - products/*/frontend/generated/**/*
+    - services/mcp/src/generated/**/*
+    - services/mcp/src/api/generated.ts
+    - tools/openapi-codegen/**/*
+    - services/mcp/scripts/lib/**
+    - frontend/bin/generate-openapi-types.mjs
+    - frontend/src/lib/api-orval-mutator.ts
+    - services/mcp/scripts/**/*
+    - services/mcp/definitions/**/*.yaml
+    - services/mcp/definitions/prompts/**/*.md
+    - products/*/mcp/**/*.yaml
+    - products/*/mcp/prompts/**/*.md
+    - services/mcp/schema/tool-definitions.json
+    - services/mcp/schema/tool-definitions-v2.json
+    - services/mcp/src/tools/generated/**/*
+    - services/mcp/schema/generated-tool-definitions.json
+    - services/mcp/schema/tool-definitions-all.json
+    - services/mcp/src/templates/sections/**/*
+    - services/mcp/schema/exec-command-reference.md
 
 # ci-paths-filter.yml -> on.pull_request.paths
 run-paths-filter-action:
-- .github/actions/paths-filter/**
-- .github/workflows/ci-paths-filter.yml
+    - .github/actions/paths-filter/**
+    - .github/workflows/ci-paths-filter.yml
 
 # ci-phrocs.yml -> on.pull_request.paths
 run-phrocs:
-- .github/workflows/ci-phrocs.yml
-- tools/phrocs/**
+    - .github/workflows/ci-phrocs.yml
+    - tools/phrocs/**
 
 # ci-backend.yml -> paths-filter `product_yamls`
 run-product-yamls:
-- products/*/product.yaml
-- '**/owners.yaml'
-- tools/owners/**
+    - products/*/product.yaml
+    - '**/owners.yaml'
+    - tools/owners/**
 
 # ci-proto.yml -> paths-filter `proto`
 run-proto:
-- proto/**
-- posthog/personhog_client/proto/generated/**
-- bin/generate_personhog_proto.sh
-- nodejs/src/common/generated/personhog/**
-- nodejs/src/common/generated/ingestion-worker/**
-- nodejs/buf.gen.yaml
-- nodejs/buf.gen.ingestion-worker.yaml
-- nodejs/package.json
-- .github/workflows/ci-proto.yml
+    - proto/**
+    - posthog/personhog_client/proto/generated/**
+    - bin/generate_personhog_proto.sh
+    - nodejs/src/common/generated/personhog/**
+    - nodejs/src/common/generated/ingestion-worker/**
+    - nodejs/buf.gen.yaml
+    - nodejs/buf.gen.ingestion-worker.yaml
+    - nodejs/package.json
+    - .github/workflows/ci-proto.yml
 
 # ci-python.yml -> paths-filter `python`
 run-python:
-- '**/*.py'
-- '*.py'
-- pyproject.toml
-- uv.lock
-- posthog/**/*
-- .github/workflows/ci-python.yml
-- .github/workflows/ci-dagster.yml
-- .github/workflows/ci-backend.yml
-- .flox/env/manifest.toml
-- frontend/src/queries/schema.json
-- frontend/src/products.json
-- tools/hogli/**
-- tools/hogli-commands/hogli_commands/**
-- tools/owners/**
-- hogli.yaml
-- bin/**
-- tools/pr-approval-agent/**
-- products/stamphog/packages/pr-approval-agent/**
-- tools/query-performance-ai/**
-- .stamphog/**
-- '**/AGENT_APPROVALS.md'
+    - '**/*.py'
+    - '*.py'
+    - pyproject.toml
+    - uv.lock
+    - posthog/**/*
+    - .github/workflows/ci-python.yml
+    - .github/workflows/ci-dagster.yml
+    - .github/workflows/ci-backend.yml
+    - .flox/env/manifest.toml
+    - frontend/src/queries/schema.json
+    - frontend/src/products.json
+    - tools/hogli/**
+    - tools/hogli-commands/hogli_commands/**
+    - tools/owners/**
+    - hogli.yaml
+    - bin/**
+    - tools/pr-approval-agent/**
+    - products/stamphog/packages/pr-approval-agent/**
+    - tools/query-performance-ai/**
+    - .stamphog/**
+    - '**/AGENT_APPROVALS.md'
 
 # ci-frontend.yml -> paths-filter `replay_shared`
 run-replay-shared:
-- common/replay-shared/**
-- pnpm-workspace.yaml
-- pnpm-lock.yaml
-- .nvmrc
-- .github/workflows/ci-frontend.yml
+    - common/replay-shared/**
+    - pnpm-workspace.yaml
+    - pnpm-lock.yaml
+    - .nvmrc
+    - .github/workflows/ci-frontend.yml
 
 # ci-rust.yml -> paths-filter `rust`
 run-rust:
-- rust/**
-- proto/**
-- .github/workflows/ci-rust.yml
-- .github/workflows/rust.yml
-- .github/workflows/rust-docker-build.yml
-- .github/actions/setup-protoc/**
-- .github/actions/setup-sccache/**
-- posthog/management/commands/setup_test_environment.py
-- posthog/migrations/**
-- ee/migrations/**
-- docker-compose.dev.yml
-- posthog/api/feature_flag.py
-- posthog/models/feature_flag/flags_cache.py
-- posthog/models/feature_flag/feature_flag.py
-- rust/feature-flags/tests/fixtures/hypercache_contract.json
+    - rust/**
+    - proto/**
+    - .github/workflows/ci-rust.yml
+    - .github/workflows/rust.yml
+    - .github/workflows/rust-docker-build.yml
+    - .github/actions/setup-protoc/**
+    - .github/actions/setup-sccache/**
+    - posthog/management/commands/setup_test_environment.py
+    - posthog/migrations/**
+    - ee/migrations/**
+    - docker-compose.dev.yml
+    - posthog/api/feature_flag.py
+    - posthog/models/feature_flag/flags_cache.py
+    - posthog/models/feature_flag/feature_flag.py
+    - rust/feature-flags/tests/fixtures/hypercache_contract.json
 
 # ci-rust-flags-integration.yml -> on.pull_request.paths
 run-rust-flags-integration:
-- rust/feature-flags/**
-- rust/personhog-replica/**
-- rust/personhog-router/**
-- posthog/api/test/rust_integration/**
-- posthog/api/feature_flag.py
-- posthog/api/cohort.py
-- posthog/models/feature_flag/**
-- posthog/models/cohort/**
-- posthog/models/group_type_mapping.py
-- .github/workflows/ci-rust-flags-integration.yml
+    - rust/feature-flags/**
+    - rust/personhog-replica/**
+    - rust/personhog-router/**
+    - posthog/api/test/rust_integration/**
+    - posthog/api/feature_flag.py
+    - posthog/api/cohort.py
+    - posthog/models/feature_flag/**
+    - posthog/models/cohort/**
+    - posthog/models/group_type_mapping.py
+    - .github/workflows/ci-rust-flags-integration.yml
 
 # ci-scripts.yml -> on.pull_request.paths
 run-scripts-tests:
-- .github/scripts/**
-- .github/auto-assign-labels.json
-- .github/workflows/ci-scripts.yml
+    - .github/scripts/**
+    - .github/auto-assign-labels.json
+    - .github/workflows/ci-scripts.yml
 
 # ci-security.yaml -> paths-filter `desktop`
 run-semgrep-desktop:
-- products/desktop/**
-- .github/workflows/ci-security.yaml
+    - products/desktop/**
+    - .github/workflows/ci-security.yaml
 
 # ci-security.yaml -> paths-filter `devex`
 run-semgrep-devex:
-- bin/**
-- common/**
-- ee/**
-- frontend/**
-- packages/**
-- posthog/**
-- products/**
-- services/**
-- tools/**
-- .semgrep/rules/devex/**
-- .github/workflows/ci-security.yaml
+    - bin/**
+    - common/**
+    - ee/**
+    - frontend/**
+    - packages/**
+    - posthog/**
+    - products/**
+    - services/**
+    - tools/**
+    - .semgrep/rules/devex/**
+    - .github/workflows/ci-security.yaml
 
 # ci-security.yaml -> paths-filter `general`
 run-semgrep-general:
-- '**'
-- '!cli/**'
-- '!common/**'
-- '!ee/**'
-- '!frontend/**'
-- '!livestream/**'
-- '!nodejs/**'
-- '!posthog/**'
-- '!products/**'
-- '!rust/**'
-- '!.semgrep/**'
-- '!docs/**'
-- '!services/**'
+    - '**'
+    - '!cli/**'
+    - '!common/**'
+    - '!ee/**'
+    - '!frontend/**'
+    - '!livestream/**'
+    - '!nodejs/**'
+    - '!posthog/**'
+    - '!products/**'
+    - '!rust/**'
+    - '!.semgrep/**'
+    - '!docs/**'
+    - '!services/**'
 
 # ci-security.yaml -> paths-filter `go`
 run-semgrep-go:
-- livestream/**
-- .github/workflows/ci-security.yaml
+    - livestream/**
+    - .github/workflows/ci-security.yaml
 
 # ci-security.yaml -> paths-filter `js`
 run-semgrep-js:
-- frontend/**
-- nodejs/**
-- services/agent-proxy/**
-- services/integration-service/**
-- services/mcp/**
-- services/oauth-proxy/**
-- services/stripe-app/**
-- .semgrep/rules/security/**
-- .github/workflows/ci-security.yaml
+    - frontend/**
+    - nodejs/**
+    - services/agent-proxy/**
+    - services/integration-service/**
+    - services/mcp/**
+    - services/oauth-proxy/**
+    - services/stripe-app/**
+    - .semgrep/rules/security/**
+    - .github/workflows/ci-security.yaml
 
 # ci-security.yaml -> paths-filter `products-frontend`
 run-semgrep-products-frontend:
-- products/**
-- .semgrep/rules/security/prefer-codegen-api.yaml
-- .github/workflows/ci-security.yaml
+    - products/**
+    - .semgrep/rules/security/prefer-codegen-api.yaml
+    - .github/workflows/ci-security.yaml
 
 # ci-security.yaml -> paths-filter `python`
 run-semgrep-python:
-- bin/**
-- common/**
-- ee/**
-- posthog/**
-- products/**
-- '!products/desktop/**'
-- services/llm-gateway/**
-- services/stripe-mock/**
-- tools/**
-- .semgrep/rules/security/**
-- .github/workflows/ci-security.yaml
+    - bin/**
+    - common/**
+    - ee/**
+    - posthog/**
+    - products/**
+    - '!products/desktop/**'
+    - services/llm-gateway/**
+    - services/stripe-mock/**
+    - tools/**
+    - .semgrep/rules/security/**
+    - .github/workflows/ci-security.yaml
 
 # ci-security.yaml -> paths-filter `rust`
 run-semgrep-rust:
-- cli/**
-- rust/**
-- .github/workflows/ci-security.yaml
+    - cli/**
+    - rust/**
+    - .github/workflows/ci-security.yaml
 
 # ci-security.yaml -> paths-filter `test-rules`
 run-semgrep-test-rules:
-- .semgrep/**
-- .github/workflows/ci-security.yaml
+    - .semgrep/**
+    - .github/workflows/ci-security.yaml
 
 # ci-storybook.yml -> paths-filter `frontend`
 run-storybook:
-- frontend/**
-- products/**/*.{ts,tsx}
-- products/**/frontend/**
-- '!products/desktop/**'
-- common/{esbuilder,mosaic,storybook,tailwind}/**
-- packages/quill/**
-- ee/frontend/**
-- services/mcp/src/ui-apps/**
-- .storybook/**
-- package.json
-- .github/workflows/ci-storybook.yml
-- playwright.config.ts
+    - frontend/**
+    - products/**/*.{ts,tsx}
+    - products/**/frontend/**
+    - '!products/desktop/**'
+    - common/{esbuilder,mosaic,storybook,tailwind}/**
+    - packages/quill/**
+    - ee/frontend/**
+    - services/mcp/src/ui-apps/**
+    - .storybook/**
+    - package.json
+    - .github/workflows/ci-storybook.yml
+    - playwright.config.ts
 
 # ci-survey-sdk-check.yml -> on.pull_request.paths
 run-survey-sdk-check:
-- frontend/src/scenes/surveys/**
-- docs/published/surveys/**
-- frontend/bin/docs/build-survey-sdk-docs.ts
+    - frontend/src/scenes/surveys/**
+    - docs/published/surveys/**
+    - frontend/bin/docs/build-survey-sdk-docs.ts
 
 # terragrunt-posthog.yaml -> on.pull_request.paths
 run-terragrunt:
-- terraform/**/*
-- .github/workflows/terragrunt-posthog.yaml
+    - terraform/**/*
+    - .github/workflows/terragrunt-posthog.yaml
 
 # test-quarantine.yml -> on.pull_request.paths
 run-test-quarantine:
-- .test_quarantine.json
-- tools/hogli-commands/hogli_commands/quarantine/**
-- .github/workflows/test-quarantine.yml
+    - .test_quarantine.json
+    - tools/hogli-commands/hogli_commands/quarantine/**
+    - .github/workflows/test-quarantine.yml
