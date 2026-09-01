@@ -137,8 +137,11 @@ def filter_matches(patterns: list[Pattern], changes: list[tuple[str, str]]) -> b
     return False
 
 
-def evaluate(filters: dict[str, list[Pattern]], changes: list[tuple[str, str]]) -> dict[str, bool]:
-    return {name: filter_matches(patterns, changes) for name, patterns in filters.items()}
+def evaluate(filters: dict[str, list[Pattern]], changes: list[tuple[str, str]]) -> dict[str, bool | int | str]:
+    out: dict[str, bool | int | str] = {}
+    for name, patterns in filters.items():
+        out[name] = filter_matches(patterns, changes)
+    return out
 
 
 def git(*args: str) -> str:
@@ -210,13 +213,13 @@ def main() -> int:
     with open(args.filters) as fh:
         filters = parse_filters(yaml.safe_load(fh))
 
-    params: dict[str, bool | int | str]
+    params: dict[str, bool | int | str] = {}
     if args.all_true:
-        params = dict.fromkeys(filters, True)
+        params.update(dict.fromkeys(filters, True))
         changes: list[tuple[str, str]] = []
     else:
         changes = changed_files(args.base)
-        params = evaluate(filters, changes)
+        params.update(evaluate(filters, changes))
 
     # Non-path parameters the continue config declares. Kept here so the emitted
     # set and the declared set stay identical — the continuation API rejects a
