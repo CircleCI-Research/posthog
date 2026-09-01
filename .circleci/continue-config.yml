@@ -497,6 +497,10 @@ jobs:
                   command: ./bin/download-mmdb
             - run:
                   name: Check ty type checking
+                  # TY_MAX_PARALLELISM caps parallel file-check tasks; without it
+                  # ty uses all 8 vCPUs and exceeds the 16 GB xlarge memory limit.
+                  environment:
+                      TY_MAX_PARALLELISM: '4'
                   command: uv run ty check
             - restore_cache:
                   keys:
