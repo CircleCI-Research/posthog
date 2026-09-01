@@ -479,6 +479,14 @@ jobs:
     python-code-quality:
         # Source: ci-python.yml / code-quality
         executor: python-node
+        # Overrides the executor's `large` (4 vCPU / 8 GB). `uv run ty check` was
+        # SIGKILLed after 25s with exit 137 -- an OOM, not a timeout. CircleCI
+        # resource classes track GitHub runners on cores but not on memory, and
+        # there is no 4-vCPU/16 GB docker class: large is 4/8 and the next step
+        # up is xlarge at 8/16. The source runs this job on depot-ubuntu-24.04,
+        # a third-party runner whose sizing does not map onto a CircleCI class
+        # at all, so memory headroom is chosen here rather than translated.
+        resource_class: xlarge
         parallelism: 1
         steps:
             - checkout
