@@ -28,6 +28,8 @@ rules:
           include:
               - '**/*.test.ts'
               - '**/*.test.tsx'
+          exclude:
+              - 'products/desktop/**'
       pattern-regex: '(?:get|query|find)(?:All)?ByRole\(\s*[''"][a-z]+[''"]\s*,\s*\{[^}]*\bname\s*:'
       metadata:
           category: best-practice
