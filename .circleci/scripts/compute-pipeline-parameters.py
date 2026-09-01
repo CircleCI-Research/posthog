@@ -210,6 +210,7 @@ def main() -> int:
     with open(args.filters) as fh:
         filters = parse_filters(yaml.safe_load(fh))
 
+    params: dict[str, bool | int | str]
     if args.all_true:
         params = dict.fromkeys(filters, True)
         changes: list[tuple[str, str]] = []
