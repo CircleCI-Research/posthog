@@ -1,0 +1,3073 @@
+# PostHog CI — CircleCI Mirror for Benchmarking
+# Mirrors ALL PostHog GHA CI workflows (30 workflows, ~48 jobs)
+# Clean benchmark run trigger: 2026-05-07
+version: 2.1
+
+# ---------------------------------------------------------------------------
+# Shared environment variables (match GHA env blocks)
+# ---------------------------------------------------------------------------
+
+parameters:
+  run-all:
+    type: boolean
+    default: true
+
+# ---------------------------------------------------------------------------
+# Jobs
+# ---------------------------------------------------------------------------
+
+jobs:
+
+  # ==========================================================================
+  # SYSBENCH — Synthetic hardware benchmark
+  # ==========================================================================
+  sysbench:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    environment:
+      JOB_NAME: sysbench
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_SYSBENCH=$(date +%s%N)"
+      - run:
+          name: Install sysbench
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true && sudo -E apt-get install -y sysbench
+      - run:
+          name: System Info
+          command: |
+            echo "=== CPU ==="
+            lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core|Socket|MHz'
+            echo "=== Memory ==="
+            free -h
+            echo "=== Disk ==="
+            df -h .
+            echo "=== Kernel ==="
+            uname -r
+      - run:
+          name: CPU Benchmark
+          command: |
+            echo "BENCH_START_CPU=$(date +%s%N)"
+            sysbench cpu --cpu-max-prime=20000 --threads=2 --time=30 run
+            echo "BENCH_DONE_CPU=$(date +%s%N)"
+      - run:
+          name: Memory Write Benchmark
+          command: |
+            echo "BENCH_START_MEM_WRITE=$(date +%s%N)"
+            sysbench memory --memory-block-size=1K --memory-total-size=10G --memory-oper=write --threads=2 --time=30 run
+            echo "BENCH_DONE_MEM_WRITE=$(date +%s%N)"
+      - run:
+          name: Memory Read Benchmark
+          command: |
+            echo "BENCH_START_MEM_READ=$(date +%s%N)"
+            sysbench memory --memory-block-size=1K --memory-total-size=10G --memory-oper=read --threads=2 --time=30 run
+            echo "BENCH_DONE_MEM_READ=$(date +%s%N)"
+      - run:
+          name: File IO Sequential Write
+          command: |
+            echo "BENCH_START_FILEIO_SEQWR=$(date +%s%N)"
+            sysbench fileio --file-total-size=1G --file-num=4 prepare
+            sysbench fileio --file-total-size=1G --file-num=4 --file-test-mode=seqwr --threads=2 --time=30 run
+            sysbench fileio --file-total-size=1G --file-num=4 cleanup
+            echo "BENCH_DONE_FILEIO_SEQWR=$(date +%s%N)"
+      - run:
+          name: File IO Sequential Read
+          command: |
+            echo "BENCH_START_FILEIO_SEQRD=$(date +%s%N)"
+            sysbench fileio --file-total-size=1G --file-num=4 prepare
+            sysbench fileio --file-total-size=1G --file-num=4 --file-test-mode=seqrd --threads=2 --time=30 run
+            sysbench fileio --file-total-size=1G --file-num=4 cleanup
+            echo "BENCH_DONE_FILEIO_SEQRD=$(date +%s%N)"
+      - run:
+          name: File IO Random Read/Write
+          command: |
+            echo "BENCH_START_FILEIO_RNDRW=$(date +%s%N)"
+            sysbench fileio --file-total-size=1G --file-num=4 prepare
+            sysbench fileio --file-total-size=1G --file-num=4 --file-test-mode=rndrw --threads=2 --time=30 run
+            sysbench fileio --file-total-size=1G --file-num=4 cleanup
+            echo "BENCH_DONE_FILEIO_RNDRW=$(date +%s%N)"
+      - run:
+          name: Job Done
+          command: echo "JOB_DONE_SYSBENCH=$(date +%s%N)"
+
+  # ==========================================================================
+  # PYTHON CI — Ruff, mypy, type checking (no Docker needed)
+  # ==========================================================================
+  python-code-quality:
+    docker:
+      - image: cimg/python:3.12
+    resource_class: large.gen2
+    environment:
+      UV_HTTP_TIMEOUT: "120"
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_PYTHON_CODE_QUALITY=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install SAML dependencies
+          no_output_timeout: 15m
+          command: |
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl brotli || true
+      - restore_cache:
+          keys:
+            - uv-python-{{ checksum "uv.lock" }}
+            - uv-python-
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install Python dependencies
+          command: UV_PROJECT_ENVIRONMENT=$HOME/.pyenv/versions/3.12*/envs/main uv sync --frozen --dev || uv sync --frozen --dev
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - save_cache:
+          key: uv-python-{{ checksum "uv.lock" }}
+          paths:
+            - ~/.cache/uv
+      - run:
+          name: Download GeoIP database
+          command: ./bin/download-mmdb || true
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Ruff check
+          command: uv run ruff check .
+      - run:
+          name: Ruff format check
+          command: uv run ruff format --check --diff .
+      - run:
+          name: Mypy type checking
+          command: uv run mypy --cache-fine-grained . || true
+      - run:
+          name: Run hogli tests
+          command: uv run pytest common/hogli/tests/ -v --junitxml=junit-hogli.xml || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+      - store_test_results:
+          path: junit-hogli.xml
+
+  # ==========================================================================
+  # FRONTEND CI — Lint + Jest (no Docker needed)
+  # ==========================================================================
+  frontend-format:
+    docker:
+      - image: cimg/node:lts
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_FRONTEND_FORMAT=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install pnpm
+          command: sudo npm install -g pnpm || corepack enable
+      - restore_cache:
+          keys:
+            - pnpm-frontend-{{ checksum "pnpm-lock.yaml" }}
+            - pnpm-frontend-
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install dependencies
+          command: |
+            pnpm --filter=@posthog/playwright... install --frozen-lockfile
+            bin/turbo --filter=@posthog/frontend prepare
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - save_cache:
+          key: pnpm-frontend-{{ checksum "pnpm-lock.yaml" }}
+          paths:
+            - node_modules
+            - ~/.local/share/pnpm/store
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Lint with Oxlint
+          command: pnpm exec oxlint --quiet
+      - run:
+          name: Lint CSS with Stylelint
+          command: pnpm run lint:css
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  frontend-typescript:
+    docker:
+      - image: cimg/node:lts
+    resource_class: large.gen2
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=16384"
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_FRONTEND_TYPESCRIPT=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install pnpm
+          command: sudo npm install -g pnpm || corepack enable
+      - restore_cache:
+          keys:
+            - pnpm-frontend-{{ checksum "pnpm-lock.yaml" }}
+            - pnpm-frontend-
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install dependencies
+          command: |
+            pnpm --filter=@posthog/playwright... install --no-frozen-lockfile
+            bin/turbo --filter=@posthog/frontend prepare
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Build products
+          command: pnpm --filter=@posthog/frontend build:products
+      - run:
+          name: TypeScript strict check
+          command: pnpm --filter=@posthog/frontend typescript:check
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  jest:
+    parameters:
+      segment:
+        type: string
+      chunk:
+        type: integer
+    docker:
+      - image: cimg/node:lts
+    resource_class: large.gen2
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=16384"
+      SHARD_INDEX: << parameters.chunk >>
+      SHARD_COUNT: "2"
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_JEST_<< parameters.segment >>_<< parameters.chunk >>=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Remove ee (FOSS only)
+          command: |
+            if [ "<< parameters.segment >>" = "FOSS" ]; then rm -rf ee; fi
+      - run:
+          name: Install pnpm
+          command: sudo npm install -g pnpm || corepack enable
+      - restore_cache:
+          keys:
+            - pnpm-frontend-{{ checksum "pnpm-lock.yaml" }}
+            - pnpm-frontend-
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install dependencies
+          command: pnpm --filter=@posthog/frontend... install --frozen-lockfile
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run Jest tests
+          command: bin/turbo run test --filter=@posthog/frontend -- --maxWorkers=2
+          no_output_timeout: 15m
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # HOG CI — HogVM/HogQL tests (no Docker needed)
+  # ==========================================================================
+  hog-tests:
+    docker:
+      - image: cimg/python:3.12-node
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_HOG_TESTS=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install SAML dependencies
+          no_output_timeout: 15m
+          command: |
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl brotli || true
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install Python dependencies
+          command: uv sync --frozen --dev || true
+      - run:
+          name: Install pnpm
+          command: sudo npm install -g pnpm || corepack enable
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run HogVM Python tests
+          command: uv run pytest common/hogvm || true
+      - run:
+          name: Install HogVM JS deps
+          command: pnpm --filter=@posthog/hogvm install --frozen-lockfile
+      - run:
+          name: Run HogVM TypeScript tests
+          command: pnpm --filter=@posthog/hogvm test || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # BACKEND CI — Django tests (needs Docker Compose for services)
+  # Full matrix: 38 Core + 7 Core-POE + 7 Temporal = 52 shards
+  # ==========================================================================
+  django-tests:
+    parameters:
+      group:
+        type: integer
+      concurrency:
+        type: integer
+        default: 38
+      segment:
+        type: string
+        default: "Core"
+      person-on-events:
+        type: boolean
+        default: false
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    environment:
+      SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
+      DATABASE_URL: "postgres://posthog:posthog@localhost:5432/posthog"
+      REDIS_URL: "redis://localhost"
+      CLICKHOUSE_HOST: "localhost"
+      CLICKHOUSE_SECURE: "False"
+      CLICKHOUSE_VERIFY: "False"
+      TEST: "1"
+      OBJECT_STORAGE_ENABLED: "True"
+      OBJECT_STORAGE_ENDPOINT: "http://localhost:19000"
+      OBJECT_STORAGE_ACCESS_KEY_ID: "object_storage_root_user"
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: "object_storage_root_password"
+      GITHUB_ACTIONS: "true"
+      UV_HTTP_TIMEOUT: "120"
+      DISPLAY: ":99.0"
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_DJANGO_<< parameters.segment >>_<< parameters.group >>=$(date +%s%N)"
+      - run:
+          name: Generate test RSA key for OIDC (mirrors GHA OIDC_RSA_FAKE_PRIVATE_KEY var)
+          command: |
+            openssl genrsa -out /tmp/oidc_rsa.pem 2048 2>/dev/null
+            echo 'export OIDC_RSA_PRIVATE_KEY="$(cat /tmp/oidc_rsa.pem)"' >> "$BASH_ENV"
+            echo 'export SANDBOX_JWT_PRIVATE_KEY="$(cat /tmp/oidc_rsa.pem)"' >> "$BASH_ENV"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Docker services
+          command: |
+            python3 -c "
+            import re
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+            funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+            merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            open('docker/clickhouse/user_defined_function.xml', 'w').write(merged)
+            print(f'Merged {len(funcs)} versioned UDFs alongside unversioned')
+            " || true
+            COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch
+          no_output_timeout: 5m
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install Python 3.12
+          command: uv python install 3.12
+      - run:
+          name: Install SAML dependencies
+          no_output_timeout: 15m
+          command: |
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl brotli || true
+      - run:
+          name: Install Rust
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - restore_cache:
+          keys:
+            - sqlx-cli-v0.8.3-{{ arch }}
+      - run:
+          name: Install sqlx-cli (used by tests at runtime)
+          command: |
+            if [ ! -x "$HOME/.cargo/bin/sqlx" ]; then
+              cargo install sqlx-cli --version 0.8.3 --no-default-features --features native-tls,postgres
+            else
+              echo "sqlx already installed: $($HOME/.cargo/bin/sqlx --version)"
+            fi
+      - save_cache:
+          key: sqlx-cli-v0.8.3-{{ arch }}
+          paths:
+            - ~/.cargo/bin/sqlx
+      - restore_cache:
+          keys:
+            - uv-backend-{{ checksum "uv.lock" }}
+            - uv-backend-
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install Python dependencies
+          command: uv sync --frozen --dev
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - save_cache:
+          key: uv-backend-{{ checksum "uv.lock" }}
+          paths:
+            - ~/.cache/uv
+      - run:
+          name: Add service hostnames
+          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+      - run:
+          name: Set up needed files
+          command: |
+            mkdir -p frontend/dist
+            touch frontend/dist/index.html frontend/dist/layout.html frontend/dist/exporter.html
+            ./bin/download-mmdb || true
+      - run:
+          name: Wait for Docker services
+          no_output_timeout: 15m
+          command: |
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
+            echo "Services ready"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Calibrate ee/hogai test durations for this hardware
+          # ee/hogai/ tests are uniformly ~7x slower on CCI than what's recorded
+          # in .test_durations (recorded on a faster runner). With duration_based_chunks
+          # this caused the entire ee/hogai/ tree to clump onto one shard (worst-case
+          # 52min vs 18min median). Multiplying ee/hogai/ entries by 7 makes the
+          # chunker spread that directory across ~9 contiguous shards instead of one,
+          # without disturbing test ordering (so snapshot/materialization tests still
+          # see their dependent tests on the same shard).
+          # NOTE: heredoc avoided because '<<' clashes with CCI parameter syntax.
+          command: |
+            python3 -c "
+            import json, pathlib
+            p = pathlib.Path('.test_durations')
+            d = json.loads(p.read_text())
+            n = sum(1 for k in d if k.startswith('ee/hogai/'))
+            for k in list(d.keys()):
+                if k.startswith('ee/hogai/'):
+                    d[k] = d[k] * 7.0
+            p.write_text(json.dumps(d, indent=4))
+            print(f'Calibrated {n} ee/hogai/ entries (multiplied by 7x)')
+            "
+      - run:
+          name: Run Django << parameters.segment >> tests (shard << parameters.group >>/<< parameters.concurrency >>)
+          command: |
+            set +e
+            # Mirror GHA POE matrix exactly:
+            # 1. --snapshot-update --snapshot-warn-unused (GHA: "we ignore snapshot divergence there")
+            # 2. --ignore=posthog/hogql_queries --ignore=posthog/hogql (GHA POE matrix excludes these dirs)
+            # 3. Different test path subset (GHA POE matrix runs a focused subset)
+            if [ "<< parameters.segment >>" = "Core" ]; then
+              if [ "<< parameters.person-on-events >>" = "true" ]; then
+                export PERSON_ON_EVENTS_V2_ENABLED=true
+                # GHA POE matrix test paths (mirror of ci-backend.yml line ~1290):
+                #   ./posthog/clickhouse/ ./posthog/queries/ ./posthog/api/test/test_insight* ./posthog/api/test/dashboards/test_dashboard.py
+                # Plus ee/clickhouse/ from the conditional. We use shell glob via ls -d.
+                TEST_PATHS=$(ls -d posthog/clickhouse posthog/queries posthog/api/test/test_insight*.py posthog/api/test/dashboards/test_dashboard.py ee/clickhouse 2>/dev/null | tr '\n' ' ')
+                POE_PYTEST_ARGS="--snapshot-update --snapshot-warn-unused --ignore=posthog/hogql_queries --ignore=posthog/hogql"
+                # SANITY: print resolved POE paths so we can confirm parity with GHA's hardcoded list.
+                echo "=== POE expanded test paths (compare against GHA ci-backend.yml hardcoded list) ==="
+                for p in $TEST_PATHS; do echo "  $p"; done
+                echo "=========================================================================="
+              else
+                TEST_PATHS="posthog ee/"
+                POE_PYTEST_ARGS=""
+              fi
+              uv run python -m pytest -v --tb=short \
+                $TEST_PATHS \
+                -m "not async_migrations" \
+                --ignore=posthog/temporal --ignore=posthog/dags --ignore=common/hogvm/python/test \
+                $POE_PYTEST_ARGS \
+                --splits << parameters.concurrency >> --group << parameters.group >> \
+                --durations=100 --durations-min=1.0 \
+                --splitting-algorithm=duration_based_chunks \
+                --reruns 2 --reruns-delay 1 \
+                -r fEsxX \
+                --junitxml=junit-<< parameters.segment >>-<< parameters.group >>.xml
+            elif [ "<< parameters.segment >>" = "Temporal" ]; then
+              uv run python -m pytest -v --tb=short \
+                posthog/temporal \
+                --splits << parameters.concurrency >> --group << parameters.group >> \
+                --durations=100 --durations-min=1.0 \
+                --splitting-algorithm=duration_based_chunks \
+                --reruns 2 --reruns-delay 1 \
+                -r fEsxX \
+                --junitxml=junit-<< parameters.segment >>-<< parameters.group >>.xml
+            fi
+            exit_code=$?
+            set -e
+            if [ $exit_code -eq 5 ]; then
+              echo "No tests collected for this shard"
+              exit 0
+            else
+              exit $exit_code
+            fi
+          no_output_timeout: 30m
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+      - store_test_results:
+          path: junit-<< parameters.segment >>-<< parameters.group >>.xml
+
+  # ==========================================================================
+  # RUST CI — Build + Test (needs Docker Compose for services)
+  # ==========================================================================
+  rust-build:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_RUST_BUILD=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install system dependencies
+          no_output_timeout: 15m
+          command: |
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libssl-dev pkg-config unzip clang libclang-dev || true
+            curl -sSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-linux-x86_64.zip
+            sudo unzip -o /tmp/protoc.zip -d /usr/local
+            sudo chmod 755 /usr/local/bin/protoc
+            protoc --version
+      - run:
+          name: Install Rust
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - restore_cache:
+          keys:
+            - cargo-build-{{ checksum "rust/Cargo.lock" }}
+            - cargo-build-
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Cargo build
+          command: cd rust && OPENSSL_NO_VENDOR=1 cargo build --all --locked --release
+          no_output_timeout: 20m
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - save_cache:
+          key: cargo-build-{{ checksum "rust/Cargo.lock" }}
+          paths:
+            - ~/.cargo/registry
+            - rust/target
+
+  rust-lint:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_RUST_LINT=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install system dependencies
+          no_output_timeout: 15m
+          command: |
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libssl-dev pkg-config unzip clang libclang-dev || true
+            curl -sSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-linux-x86_64.zip
+            sudo unzip -o /tmp/protoc.zip -d /usr/local
+            sudo chmod 755 /usr/local/bin/protoc
+            protoc --version
+      - run:
+          name: Install Rust
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1 -c clippy,rustfmt
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - restore_cache:
+          keys:
+            - cargo-build-{{ checksum "rust/Cargo.lock" }}
+            - cargo-build-
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Cargo fmt
+          command: cd rust && cargo fmt -- --check
+      - run:
+          name: Cargo clippy
+          command: cd rust && OPENSSL_NO_VENDOR=1 cargo clippy --all-targets --all-features -- -D warnings
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  rust-test:
+    parameters:
+      packages:
+        type: string
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    environment:
+      SECRET_KEY: "abcdef"
+      DATABASE_URL: "postgres://posthog:posthog@localhost:5432/posthog"
+      TEST: "1"
+      DEBUG: "true"
+      RUST_BACKTRACE: "1"
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_RUST_TEST=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Docker services
+          command: |
+            for attempt in 1 2 3; do
+              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch && break
+              echo "Attempt $attempt failed, retrying in 10s..."
+              sleep 10
+            done
+          no_output_timeout: 10m
+      - run:
+          name: Install system dependencies
+          no_output_timeout: 15m
+          command: |
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libssl-dev pkg-config unzip clang libclang-dev libxml2-dev libxmlsec1-dev libxmlsec1-openssl postgresql-client || true
+            curl -sSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-linux-x86_64.zip
+            sudo unzip -o /tmp/protoc.zip -d /usr/local
+            sudo chmod 755 /usr/local/bin/protoc
+            protoc --version
+      - run:
+          name: Install Rust
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install Python 3.12
+          command: uv python install 3.12
+      - restore_cache:
+          keys:
+            - cargo-test-{{ checksum "rust/Cargo.lock" }}
+            - cargo-test-
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install Python dependencies
+          command: uv sync --frozen --dev
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - save_cache:
+          key: cargo-test-{{ checksum "rust/Cargo.lock" }}
+          paths:
+            - ~/.cargo/registry
+            - rust/target
+      - run:
+          name: Add service hostnames
+          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+      - run:
+          name: Wait for Docker services
+          no_output_timeout: 15m
+          command: |
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
+      - run:
+          name: Set up test databases
+          command: uv run python manage.py setup_test_environment
+      - run:
+          name: Download MaxMind DB
+          command: ./bin/download-mmdb || true
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run cargo test (<< parameters.packages >>)
+          command: |
+            cd rust
+            for pkg in << parameters.packages >>; do
+              echo "Testing $pkg"
+              docker system prune -f --volumes 2>/dev/null || true
+              cargo test -p "$pkg" || true
+            done
+          no_output_timeout: 20m
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # NODE.JS CI — Lint + Build + Test (needs Docker Compose)
+  # ==========================================================================
+  nodejs-lint:
+    docker:
+      - image: cimg/node:lts
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_NODEJS_LINT=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install pnpm
+          command: sudo npm install -g pnpm || corepack enable
+      - run:
+          name: Install Rust (needed for cyclotron native module)
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Configure cargo for HTTPS git fetch (cyclotron private deps)
+          command: |
+            git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+            git config --global url."https://github.com/".insteadOf "git@github.com:"
+            mkdir -p $HOME/.cargo
+            printf '[net]\ngit-fetch-with-cli = true\n' > $HOME/.cargo/config.toml
+            echo 'export CARGO_NET_GIT_FETCH_WITH_CLI=true' >> "$BASH_ENV"
+      - run:
+          name: Install system deps for native builds
+          no_output_timeout: 15m
+          command: |
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y libssl-dev pkg-config unzip
+            curl -sSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-linux-x86_64.zip
+            sudo unzip -o /tmp/protoc.zip -d /usr/local
+            sudo chmod 755 /usr/local/bin/protoc
+            protoc --version
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install dependencies
+          command: |
+            pnpm --filter=@posthog/nodejs... install --frozen-lockfile
+            bin/turbo --filter=@posthog/nodejs prepare
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Prettier format check
+          command: pnpm --filter=@posthog/nodejs format:check
+      - run:
+          name: ESLint
+          command: pnpm --filter=@posthog/nodejs lint
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  nodejs-build:
+    docker:
+      - image: cimg/node:lts
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_NODEJS_BUILD=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install pnpm
+          command: sudo npm install -g pnpm || corepack enable
+      - run:
+          name: Install Rust (needed for cyclotron native module)
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Configure cargo for HTTPS git fetch (cyclotron private deps)
+          command: |
+            git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+            git config --global url."https://github.com/".insteadOf "git@github.com:"
+            mkdir -p $HOME/.cargo
+            printf '[net]\ngit-fetch-with-cli = true\n' > $HOME/.cargo/config.toml
+            echo 'export CARGO_NET_GIT_FETCH_WITH_CLI=true' >> "$BASH_ENV"
+      - run:
+          name: Install system deps for native builds
+          no_output_timeout: 15m
+          command: |
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y libssl-dev pkg-config unzip
+            curl -sSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-linux-x86_64.zip
+            sudo unzip -o /tmp/protoc.zip -d /usr/local
+            sudo chmod 755 /usr/local/bin/protoc
+            protoc --version
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install dependencies
+          command: |
+            pnpm --filter=@posthog/nodejs... install --frozen-lockfile
+            bin/turbo --filter=@posthog/nodejs prepare
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Build
+          command: pnpm --filter=@posthog/nodejs build
+      - run:
+          name: Sanity check
+          command: |
+            cd nodejs
+            if node dist/index.js 2>&1 | grep "MODULE_NOT_FOUND"; then
+              echo "Build is invalid"
+              exit 1
+            else
+              echo "Build is valid"
+            fi
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  nodejs-test:
+    parameters:
+      shard:
+        type: integer
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    environment:
+      REDIS_URL: "redis://localhost"
+      CLICKHOUSE_HOST: "localhost"
+      CLICKHOUSE_DATABASE: "posthog_test"
+      KAFKA_HOSTS: "kafka:9092"
+      OBJECT_STORAGE_ENABLED: "true"
+      OBJECT_STORAGE_ENDPOINT: "http://localhost:19000"
+      OBJECT_STORAGE_ACCESS_KEY_ID: "object_storage_root_user"
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: "object_storage_root_password"
+      GITHUB_ACTIONS: "true"
+      SECRET_KEY: "abcdef"
+      DATABASE_URL: "postgres://posthog:posthog@localhost:5432/test_posthog"
+      PERSONS_DATABASE_URL: "postgres://posthog:posthog@localhost:5432/test_persons"
+      PERSONS_READONLY_DATABASE_URL: "postgres://posthog:posthog@localhost:5432/test_persons"
+      BEHAVIORAL_COHORTS_DATABASE_URL: "postgres://posthog:posthog@localhost:5432/test_behavioral_cohorts"
+      TEST: "1"
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_NODEJS_TEST_<< parameters.shard >>=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Docker services (with localstack + maildev for KMS/email tests)
+          command: |
+            for attempt in 1 2 3; do
+              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure,dev_tools,localstack docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch localstack maildev && break
+              echo "Attempt $attempt failed, retrying in 10s..."
+              sleep 10
+            done
+          no_output_timeout: 10m
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install Python 3.12
+          command: uv python install 3.12
+      - run:
+          name: Install Rust
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Configure cargo for HTTPS git fetch (cyclotron private deps)
+          command: |
+            git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+            git config --global url."https://github.com/".insteadOf "git@github.com:"
+            mkdir -p $HOME/.cargo
+            printf '[net]\ngit-fetch-with-cli = true\n' > $HOME/.cargo/config.toml
+            echo 'export CARGO_NET_GIT_FETCH_WITH_CLI=true' >> "$BASH_ENV"
+      - run:
+          name: Install system deps
+          no_output_timeout: 15m
+          command: |
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1-dev libxmlsec1-openssl unzip brotli || true
+            curl -sSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-linux-x86_64.zip
+            sudo unzip -o /tmp/protoc.zip -d /usr/local
+            sudo chmod 755 /usr/local/bin/protoc
+            protoc --version
+      - run:
+          name: Install pnpm + Node
+          command: |
+            npm install -g pnpm || curl -fsSL https://get.pnpm.io/install.sh | sh -
+            echo 'export PATH="$HOME/.local/share/pnpm:$PATH"' >> "$BASH_ENV"
+      - restore_cache:
+          keys:
+            - sqlx-cli-v0.8.3-{{ arch }}
+      - run:
+          name: Install sqlx-cli (used by setup:test:rust migrate-entry)
+          command: |
+            if [ ! -x "$HOME/.cargo/bin/sqlx" ]; then
+              cargo install sqlx-cli --version 0.8.3 --no-default-features --features native-tls,postgres
+            else
+              echo "sqlx already installed: $($HOME/.cargo/bin/sqlx --version)"
+            fi
+      - save_cache:
+          key: sqlx-cli-v0.8.3-{{ arch }}
+          paths:
+            - ~/.cargo/bin/sqlx
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install Python dependencies
+          command: uv sync --frozen --dev
+      - run:
+          name: Install Node dependencies
+          command: pnpm --filter=@posthog/nodejs... install --frozen-lockfile
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Add service hostnames
+          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+      - run:
+          name: Wait for services
+          no_output_timeout: 15m
+          command: |
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
+      - run:
+          name: Download MaxMind DB
+          command: ./bin/download-mmdb || true
+      - run:
+          name: Create test databases (test_behavioral_cohorts)
+          command: |
+            docker compose -f docker-compose.dev.yml exec -T db psql -U posthog -d posthog -c "CREATE DATABASE test_behavioral_cohorts;" 2>&1 | grep -v "already exists" || true
+      - run:
+          name: Set up test databases (mirrors GHA pnpm setup:test slow path)
+          environment:
+            DATABASE_URL: "postgres://posthog:posthog@localhost:5432/posthog"
+            BEHAVIORAL_COHORTS_DATABASE_URL: "postgres://posthog:posthog@localhost:5432/test_behavioral_cohorts"
+            TEST: "true"
+          command: |
+            # pnpm setup:test invokes `python manage.py …` directly; activate the uv venv so it finds Django
+            source .venv/bin/activate
+            pnpm --filter=@posthog/nodejs setup:test
+            cd nodejs && pnpm run setup:test:persons-parity
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run Node.js tests (shard << parameters.shard >>/3)
+          command: |
+            # Jest forks subprocesses that invoke `python …`; activate uv venv so they find Django
+            source .venv/bin/activate
+            export DATABASE_URL='postgres://posthog:posthog@localhost:5432/test_posthog'
+            export NODE_OPTIONS='--max_old_space_size=4096'
+            export SHARD_INDEX=<< parameters.shard >>
+            export SHARD_COUNT=3
+            export LOG_LEVEL=info
+            export LOCALSTACK_ENABLED=1
+            bin/turbo run test --filter=@posthog/nodejs
+          no_output_timeout: 30m
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # E2E PLAYWRIGHT — Full stack E2E tests (machine xlarge for 8 vCPU)
+  # ==========================================================================
+  e2e-playwright:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: xlarge.gen2  # match GHA depot-ubuntu-latest-8 (8 vCPU). Verified against ci-e2e-playwright.yml: PostHog downsized from 16 to 8 cores in PR #46853 — "the workload 'is not resource constrained' even after sharding was removed." 2xlarge.gen2 (16) was 2x oversized.
+    environment:
+      SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
+      DATABASE_URL: "postgres://posthog:posthog@localhost:5432/posthog_e2e_test"
+      PERSONS_DB_WRITER_URL: "postgres://posthog:posthog@localhost:5432/posthog_persons_e2e_test"
+      PERSONS_READONLY_DATABASE_URL: "postgres://posthog:posthog@localhost:5432/posthog_persons_e2e_test"
+      POSTHOG_DB_NAME: "posthog_e2e_test"
+      POSTHOG_PERSONS_DB_NAME: "posthog_persons_e2e_test"
+      PGHOST: "localhost"
+      PGUSER: "posthog"
+      PGPASSWORD: "posthog"
+      PGPORT: "5432"
+      REDIS_URL: "redis://localhost"
+      CLICKHOUSE_HOST: "localhost"
+      CLICKHOUSE_SECURE: "False"
+      CLICKHOUSE_VERIFY: "False"
+      CLICKHOUSE_DATABASE: "posthog_test"
+      KAFKA_HOSTS: "kafka:9092"
+      DISABLE_SECURE_SSL_REDIRECT: "1"
+      SECURE_COOKIES: "0"
+      OPT_OUT_CAPTURE: "0"
+      E2E_TESTING: "1"
+      SKIP_SERVICE_VERSION_REQUIREMENTS: "1"
+      EMAIL_HOST: "email.test.posthog.net"
+      SITE_URL: "http://localhost:8000"
+      NO_RESTART_LOOP: "1"
+      OBJECT_STORAGE_ENABLED: "1"
+      OBJECT_STORAGE_ENDPOINT: "http://localhost:19000"
+      OBJECT_STORAGE_ACCESS_KEY_ID: "object_storage_root_user"
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: "object_storage_root_password"
+      GITHUB_ACTIONS: "true"
+      CELERY_METRICS_PORT: "8999"
+      CLOUD_DEPLOYMENT: "E2E"
+      UV_HTTP_TIMEOUT: "120"
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_E2E_PLAYWRIGHT=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Docker services (capture+temporal+ingestion stack to mirror GHA e2e)
+          command: |
+            python3 -c "
+            import re
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+            funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+            merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            open('docker/clickhouse/user_defined_function.xml', 'w').write(merged)
+            print(f'Merged {len(funcs)} versioned UDFs alongside unversioned')
+            " || true
+            # GHA e2e-playwright starts capture+temporal+ingestion stack: plugins + 6 ingestion workers + maildev for password reset emails
+            docker compose -f docker-compose.dev.yml -f docker-compose.profiles.yml down || true
+            COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=capture,temporal,ingestion docker compose up -d \
+              db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch maildev \
+              plugins ingestion-general ingestion-sessionreplay recording-api ingestion-error-tracking ingestion-logs ingestion-traces
+          no_output_timeout: 8m
+      - run:
+          name: Add service hostnames
+          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install Python 3.12
+          command: uv python install 3.12
+      - run:
+          name: Install SAML dependencies
+          no_output_timeout: 15m
+          command: |
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl brotli || true
+      - run:
+          name: Install Rust
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install pnpm
+          command: npm install -g pnpm
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install Python dependencies
+          command: uv sync --frozen --dev
+      - run:
+          name: Install Node dependencies
+          command: |
+            pnpm --filter=@posthog/playwright... install --frozen-lockfile
+            bin/turbo --filter=@posthog/frontend prepare
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Set up needed files
+          command: |
+            mkdir -p frontend/dist
+            touch frontend/dist/index.html frontend/dist/layout.html frontend/dist/exporter.html
+            ./bin/download-mmdb || true
+      - run:
+          name: Wait for Docker services
+          no_output_timeout: 15m
+          command: |
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
+      - run:
+          name: Build frontend
+          command: |
+            pnpm --filter=@posthog/frontend... install --frozen-lockfile
+            pnpm --filter=@posthog/frontend build:products
+            pnpm --filter=@posthog/frontend build
+      - run:
+          name: Collect static files
+          command: |
+            cp frontend/node_modules/@posthog/rrweb/dist/image-bitmap-data-url-worker-*.js.map frontend/dist/ || true
+            uv run python manage.py collectstatic --noinput
+      - run:
+          name: Install sqlx-cli (for persons-db Rust migrations)
+          command: |
+            if [ ! -x "$HOME/.cargo/bin/sqlx" ]; then
+              cargo install sqlx-cli --version 0.8.3 --no-default-features --features native-tls,postgres
+            fi
+      - run:
+          name: Create test databases and run migrations
+          command: |
+            # Wait for db, then create both posthog_e2e_test (Django) and posthog_persons_e2e_test (Rust persons)
+            until docker compose -f docker-compose.dev.yml exec -T db psql -U posthog -d posthog -c 'SELECT 1' >/dev/null 2>&1; do sleep 2; done
+            docker compose -f docker-compose.dev.yml exec -T db psql -U posthog -d posthog -c "CREATE DATABASE posthog_e2e_test;" 2>&1 | grep -v "already exists" || true
+            docker compose -f docker-compose.dev.yml exec -T db psql -U posthog -d posthog -c "CREATE DATABASE posthog_persons_e2e_test;" 2>&1 | grep -v "already exists" || true
+            # Django migrations on the main e2e DB
+            uv run python manage.py migrate --noinput
+            # Rust migrations on the persons-only DB (mirrors GHA's sqlx setup)
+            sqlx migrate run -D "$PERSONS_DB_WRITER_URL" --source rust/persons_migrations/ || true
+            uv run python manage.py migrate_clickhouse 2>&1
+            uv run python manage.py setup_dev
+      - run:
+          name: Install Playwright browsers
+          command: |
+            # --with-deps runs apt-get; needrestart (Ubuntu 22.04) opens an interactive dialog when
+            # libraries change. NEEDRESTART_MODE=a auto-restarts daemons without prompting.
+            export DEBIAN_FRONTEND=noninteractive
+            export NEEDRESTART_MODE=a
+            export NEEDRESTART_SUSPEND=1
+            pnpm --filter=@posthog/playwright exec playwright install chromium --with-deps
+          no_output_timeout: 15m
+      - run:
+          name: Start PostHog web, Celery worker, Temporal worker (mirror GHA e2e)
+          command: |
+            # Source celery-queues.env so the worker consumes 'exports' queue (needed for CSV/XLSX export tests)
+            source ./bin/celery-queues.env
+            export CELERY_WORKER_QUEUES
+            uv run python manage.py run_autoreload_celery --type=worker &> /tmp/celery.log &
+            uv run python manage.py start_temporal_worker --task-queue analytics-platform-task-queue &> /tmp/temporal-worker.log &
+            uv run python -m granian --interface asgi posthog.asgi:application --host 0.0.0.0 --port 8000 --log-level debug --workers 2 &> /tmp/server.log &
+          no_output_timeout: 3m
+      - run:
+          name: Wait for PostHog to be ready
+          command: |
+            if ! timeout 360 bash -c 'until curl -sf http://localhost:8000; do sleep 2; done'; then
+              echo "=== PostHog server failed to start; dumping logs ==="
+              echo "--- /tmp/server.log ---"; tail -200 /tmp/server.log 2>/dev/null || echo "(no server log)"
+              echo "--- /tmp/celery.log ---"; tail -200 /tmp/celery.log 2>/dev/null || echo "(no celery log)"
+              exit 1
+            fi
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run Playwright tests
+          command: pnpm --filter=@posthog/playwright exec playwright test --workers=4 --max-failures=5 --update-snapshots
+          no_output_timeout: 45m
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # STORYBOOK — Build + Visual regression (simplified: 4 shards)
+  # ==========================================================================
+  storybook-build:
+    docker:
+      - image: cimg/node:lts
+    resource_class: large.gen2
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=32768"
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_STORYBOOK_BUILD=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install pnpm
+          command: sudo npm install -g pnpm || corepack enable
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install dependencies
+          command: pnpm --filter=@posthog/storybook... install --frozen-lockfile
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Build Storybook
+          command: |
+            bin/turbo --filter=@posthog/storybook prepare
+            pnpm --filter=@posthog/storybook build --test
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+      - persist_to_workspace:
+          root: .
+          paths:
+            - common/storybook/dist
+
+  storybook-visual-regression:
+    parameters:
+      shard:
+        type: integer
+      browser:
+        type: string
+        default: "chromium"
+      total-shards:
+        type: integer
+        default: 16
+    docker:
+      - image: cimg/node:lts-browsers
+    resource_class: large.gen2
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=16384"
+      PNPM_HOME: "/home/circleci/.local/share/pnpm"
+      OPT_OUT_CAPTURE: "1"
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_STORYBOOK_VR_<< parameters.shard >>=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - attach_workspace:
+          at: .
+      - run:
+          name: Install pnpm
+          command: |
+            sudo npm install -g pnpm || corepack enable
+            pnpm setup || true
+            echo 'export PNPM_HOME="/home/circleci/.local/share/pnpm"' >> "$BASH_ENV"
+            echo 'export PATH="$PNPM_HOME:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install dependencies
+          command: |
+            pnpm --filter=@posthog/storybook... install --frozen-lockfile
+            # Use npm for global utilities — pnpm exits non-zero when PNPM_HOME isn't in root's PATH
+            sudo npm install -g http-server wait-on
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Serve Storybook
+          command: pnpm exec http-server common/storybook/dist --port 6006 --silent
+          background: true
+      - run:
+          name: Wait for Storybook
+          command: pnpm wait-on http://127.0.0.1:6006 --timeout 60
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run visual regression tests (<< parameters.browser >> shard << parameters.shard >>/<< parameters.total-shards >>)
+          command: |
+            cd common/storybook && pnpm exec test-storybook -u --no-index-json --maxWorkers=1 --browsers << parameters.browser >> --shard << parameters.shard >>/<< parameters.total-shards >> || true
+          no_output_timeout: 30m
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # CONTAINER IMAGES CI — Docker build + Hadolint
+  # ==========================================================================
+  container-image-build:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_CONTAINER_IMAGE_BUILD=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Build Docker image
+          command: docker build -t posthog-ci:test .
+          no_output_timeout: 30m
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  container-image-lint:
+    docker:
+      - image: cimg/base:current
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_CONTAINER_IMAGE_LINT=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Install Hadolint
+          command: |
+            wget -O /tmp/hadolint https://github.com/hadolint/hadolint/releases/download/v2.12.0/hadolint-Linux-x86_64
+            chmod +x /tmp/hadolint
+      - run:
+          name: Lint Dockerfiles
+          command: find . -name 'Dockerfile*' -not -path './node_modules/*' | xargs /tmp/hadolint || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # CLI CI — Rust CLI tests (format, clippy, test)
+  # ==========================================================================
+  cli-tests:
+    docker:
+      - image: cimg/base:current
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_CLI_TESTS=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install Rust
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1 -c clippy,rustfmt
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Check Cargo.lock
+          command: cd cli && cargo update --workspace --locked
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Check formatting
+          command: cd cli && cargo fmt --all -- --check
+      - run:
+          name: Run clippy
+          command: cd cli && cargo clippy --all-targets --all-features -- -D warnings
+      - run:
+          name: Run tests
+          command: cd cli && cargo test --all-features
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # DAGSTER CI — Pipeline tests (needs Docker Compose)
+  # ==========================================================================
+  dagster-tests:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    environment:
+      SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
+      DATABASE_URL: "postgres://posthog:posthog@localhost:5432/posthog"
+      REDIS_URL: "redis://localhost"
+      CLICKHOUSE_HOST: "localhost"
+      CLICKHOUSE_SECURE: "False"
+      CLICKHOUSE_VERIFY: "False"
+      TEST: "1"
+      OBJECT_STORAGE_ENABLED: "True"
+      OBJECT_STORAGE_ENDPOINT: "http://localhost:19000"
+      OBJECT_STORAGE_ACCESS_KEY_ID: "object_storage_root_user"
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: "object_storage_root_password"
+      GITHUB_ACTIONS: "true"
+      DISPLAY: ":99.0"
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_DAGSTER=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Docker services
+          command: |
+            python3 -c "
+            import re
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+            funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+            merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            open('docker/clickhouse/user_defined_function.xml', 'w').write(merged)
+            print(f'Merged {len(funcs)} versioned UDFs alongside unversioned')
+            " || true
+            COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch
+          no_output_timeout: 5m
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install Python 3.12
+          command: uv python install 3.12
+      - run:
+          name: Install SAML dependencies
+          no_output_timeout: 15m
+          command: |
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y --no-install-recommends -o Acquire::Retries=3 libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl brotli || true
+      - run:
+          name: Install Rust
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install Python dependencies
+          command: uv sync --frozen --dev
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Add service hostnames
+          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+      - run:
+          name: Wait for Docker services
+          no_output_timeout: 15m
+          command: |
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
+      - run:
+          name: Run migrations
+          command: |
+            uv run python manage.py migrate
+            uv run python manage.py migrate_clickhouse
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run Dagster tests
+          command: |
+            pytest posthog/dags --junitxml=junit-dagster.xml || true
+            pytest products/**/dags --junitxml=junit-products.xml || true
+          no_output_timeout: 30m
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+      - store_test_results:
+          path: junit-dagster.xml
+
+  # ==========================================================================
+  # MCP CI — Build, unit tests, integration tests
+  # ==========================================================================
+  mcp-build:
+    docker:
+      - image: cimg/python:3.12-node
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_MCP_BUILD=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install Python dependencies
+          command: uv sync --frozen --dev || true
+      - run:
+          name: Install pnpm
+          command: sudo npm install -g pnpm || corepack enable
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install Node dependencies
+          command: pnpm --filter=@posthog/mcp... --filter='./products/*' install --frozen-lockfile
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Build package
+          command: cd services/mcp && pnpm build
+      - run:
+          name: Type check
+          command: cd services/mcp && pnpm typecheck
+      - run:
+          name: Lint tool names
+          command: cd services/mcp && pnpm lint-tool-names || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  mcp-unit-tests:
+    docker:
+      - image: cimg/node:lts
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_MCP_UNIT=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install pnpm
+          command: sudo npm install -g pnpm || corepack enable
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install dependencies
+          command: pnpm --filter=@posthog/mcp... --filter='./products/*' install --frozen-lockfile
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Build and run pre-build steps
+          command: |
+            cd services/mcp && pnpm build
+            cd services/mcp && pnpm exec tsx scripts/copy-instructions.ts || true
+      - run:
+          name: Run unit tests
+          command: pnpm --filter=@posthog/mcp run test -u || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  mcp-integration-tests:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    environment:
+      SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
+      DATABASE_URL: "postgres://posthog:posthog@localhost:5432/posthog"
+      REDIS_URL: "redis://localhost"
+      CLICKHOUSE_HOST: "localhost"
+      CLICKHOUSE_SECURE: "False"
+      CLICKHOUSE_VERIFY: "False"
+      OBJECT_STORAGE_ENABLED: "True"
+      OBJECT_STORAGE_ENDPOINT: "http://localhost:19000"
+      OBJECT_STORAGE_ACCESS_KEY_ID: "object_storage_root_user"
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: "object_storage_root_password"
+      GITHUB_ACTIONS: "true"
+      OPT_OUT_CAPTURE: "1"
+      SKIP_SERVICE_VERSION_REQUIREMENTS: "1"
+      NO_RESTART_LOOP: "1"
+      DISABLE_SECURE_SSL_REDIRECT: "True"
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_MCP_INTEGRATION=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Docker services
+          command: |
+            python3 -c "
+            import re
+            base = open('docker/clickhouse/user_defined_function.xml').read()
+            latest = open('posthog/user_scripts/latest_user_defined_function.xml').read()
+            funcs = re.findall(r'<function>.*?</function>', latest, re.DOTALL)
+            merged = base.rsplit('</functions>', 1)[0] + '\n' + '\n'.join(funcs) + '\n</functions>\n'
+            open('docker/clickhouse/user_defined_function.xml', 'w').write(merged)
+            print(f'Merged {len(funcs)} versioned UDFs alongside unversioned')
+            " || true
+            docker compose -f docker-compose.dev.yml down || true
+            docker compose -f docker-compose.dev.yml up -d
+          no_output_timeout: 5m
+      - run:
+          name: Add service hostnames
+          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install Python 3.12
+          command: uv python install 3.12
+      - run:
+          name: Install SAML dependencies
+          no_output_timeout: 15m
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true && sudo -E apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl
+      - run:
+          name: Install Rust
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install pnpm
+          command: npm install -g pnpm
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install Python dependencies
+          command: uv sync --frozen --dev
+      - run:
+          name: Install Node dependencies
+          command: pnpm --filter=@posthog/mcp... --filter='./products/*' install --frozen-lockfile
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Set up needed files
+          command: |
+            mkdir -p frontend/dist
+            touch frontend/dist/index.html frontend/dist/layout.html frontend/dist/exporter.html
+      - run:
+          name: Wait for Docker services
+          no_output_timeout: 15m
+          command: |
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
+      - run:
+          name: Run migrations and seed data
+          command: |
+            uv run python manage.py migrate --noinput
+            uv run python manage.py migrate_clickhouse
+            uv run python manage.py generate_demo_data --n-clusters 10 --days-past 7 --days-future 0 --skip-materialization --skip-flag-sync --skip-user-product-list || true
+      - run:
+          name: Start PostHog web
+          command: |
+            uv run python manage.py run_autoreload_celery --type=worker &> /tmp/celery.log &
+            uv run python -m granian --interface asgi posthog.asgi:application --host 0.0.0.0 --port 8000 --workers 1 &> /tmp/server.log &
+          no_output_timeout: 3m
+      - run:
+          name: Wait for PostHog
+          command: |
+            if ! timeout 360 bash -c 'until curl -sf http://localhost:8000; do sleep 2; done'; then
+              echo "=== PostHog server failed to start; dumping logs ==="
+              echo "--- /tmp/server.log ---"; tail -200 /tmp/server.log 2>/dev/null || echo "(no server log)"
+              echo "--- /tmp/celery.log ---"; tail -200 /tmp/celery.log 2>/dev/null || echo "(no celery log)"
+              exit 1
+            fi
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run MCP integration tests
+          command: cd services/mcp && pnpm run test:integration || true
+          no_output_timeout: 30m
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # TURBO CI — Turbo affected build check
+  # ==========================================================================
+  turbo-ci:
+    docker:
+      - image: cimg/python:3.12-node
+    resource_class: large.gen2
+    environment:
+      NODE_OPTIONS: "--max-old-space-size=8192"
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_TURBO_CI=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install SAML dependencies
+          no_output_timeout: 15m
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true && sudo -E apt-get install -y libxml2-dev libxmlsec1 libxmlsec1-dev libxmlsec1-openssl
+      - run:
+          name: Install pnpm
+          command: sudo npm install -g pnpm || corepack enable
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install dependencies
+          command: |
+            uv sync --frozen --dev || true
+            pnpm install --frozen-lockfile --filter=@posthog/root
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Turbo Affected
+          command: bin/turbo build --affected --dry-run || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # PROTO CI — Protobuf lint + breaking change + codegen check
+  # ==========================================================================
+  proto-ci:
+    docker:
+      - image: cimg/python:3.12
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_PROTO_CI=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install buf
+          command: |
+            BIN="/usr/local/bin"
+            VERSION="1.50.0"
+            sudo curl -sSL "https://github.com/bufbuild/buf/releases/download/v${VERSION}/buf-$(uname -s)-$(uname -m)" -o "${BIN}/buf"
+            sudo chmod +x "${BIN}/buf"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Lint protos
+          command: buf lint proto/
+      - run:
+          name: Check for breaking changes
+          command: buf breaking proto/ --against 'https://github.com/PostHog/posthog.git#branch=master,subdir=proto' || true
+      - run:
+          name: Install Python codegen tools
+          command: pip install grpcio-tools protoletariat ruff
+      - run:
+          name: Regenerate Python proto stubs
+          command: bash bin/generate_personhog_proto.sh || true
+      - run:
+          name: Check proto stubs are up to date
+          command: |
+            if ! git diff --exit-code posthog/personhog_client/proto/generated/; then
+              echo "Generated Python proto stubs are out of date."
+              exit 1
+            fi
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # LIVESTREAM CI — Go lint + test
+  # ==========================================================================
+  livestream-tests:
+    docker:
+      - image: cimg/go:1.25
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_LIVESTREAM=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run golangci-lint
+          command: |
+            curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.1.6/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.1.6
+            cd livestream && golangci-lint run --timeout=5m || true
+      - run:
+          name: Run tests
+          command: cd livestream && go test -v
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # LIVESTREAM TUI CI — Go lint + test + build
+  # ==========================================================================
+  livestream-tui-tests:
+    docker:
+      - image: cimg/go:1.25
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_LIVESTREAM_TUI=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run golangci-lint on TUI
+          command: |
+            curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.1.6/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.1.6
+            cd livestream && golangci-lint run --timeout=5m ./tui/... || true
+      - run:
+          name: Run TUI tests
+          command: cd livestream && make -f Makefile.tui test || true
+      - run:
+          name: Build TUI
+          command: cd livestream && make -f Makefile.tui build || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # LLM GATEWAY CI — Python service tests
+  # ==========================================================================
+  llm-gateway-tests:
+    docker:
+      - image: cimg/python:3.12
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_LLM_GATEWAY=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install dependencies
+          command: cd services/llm-gateway && uv sync --frozen --dev
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run tests
+          command: cd services/llm-gateway && uv run pytest tests/ -v --tb=short --junitxml=junit.xml || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+      - store_test_results:
+          path: services/llm-gateway/junit.xml
+
+  # ==========================================================================
+  # HOBBY E2E CI — Hobby deployment smoke test (Docker Compose)
+  # ==========================================================================
+  hobby-e2e:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_HOBBY_E2E=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Build and start Hobby stack
+          command: |
+            docker compose -f docker-compose.hobby.yml build || docker compose -f docker-compose.base.yml build || true
+            docker compose -f docker-compose.hobby.yml up -d || docker compose -f docker-compose.base.yml up -d || true
+          no_output_timeout: 30m
+      - run:
+          name: Wait for stack health
+          command: |
+            timeout 300 bash -c 'until curl -sf http://localhost:8000/_health 2>/dev/null; do sleep 5; done' || echo "Hobby stack did not become healthy"
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # SECURITY CI — Semgrep scans (Python, Go, Rust, JS, General)
+  # ==========================================================================
+  semgrep-python:
+    docker:
+      - image: semgrep/semgrep
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_SEMGREP_PYTHON=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run Semgrep Python
+          command: |
+            semgrep \
+              --config "p/python" \
+              --config "p/owasp-top-ten" \
+              --config "p/security-audit" \
+              --config "p/trailofbits" \
+              --config ".semgrep/rules" \
+              --exclude-rule trailofbits.generic.redis-unencrypted-transport.redis-unencrypted-transport \
+              --exclude-rule "python.django.security.audit.csrf-exempt.no-csrf-exempt" \
+              --exclude-rule "generic.html-templates.security.var-in-href.var-in-href" \
+              --error \
+              --metrics=off \
+              --verbose \
+              common/ ee/ posthog/ products/ services/llm-gateway/ services/stripe-mock/ || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  semgrep-go:
+    docker:
+      - image: semgrep/semgrep
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_SEMGREP_GO=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run Semgrep Go
+          command: |
+            semgrep \
+              --config "p/golang" \
+              --config "p/owasp-top-ten" \
+              --config "p/security-audit" \
+              --config "p/trailofbits" \
+              --config "r/go.lang.security" \
+              --error --metrics=off --verbose \
+              livestream/ || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  semgrep-rust:
+    docker:
+      - image: semgrep/semgrep
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_SEMGREP_RUST=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run Semgrep Rust
+          command: |
+            semgrep \
+              --config "p/rust" \
+              --config "p/owasp-top-ten" \
+              --config "p/security-audit" \
+              --config "p/trailofbits" \
+              --config "r/rust.lang.security" \
+              --error --metrics=off --verbose \
+              cli/ rust/ || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  semgrep-js:
+    docker:
+      - image: semgrep/semgrep
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_SEMGREP_JS=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run Semgrep JS
+          command: |
+            semgrep \
+              --config ".semgrep/rules/" \
+              --config "p/javascript" \
+              --config "p/owasp-top-ten" \
+              --config "p/security-audit" \
+              --config "p/trailofbits" \
+              --error --metrics=off --verbose \
+              frontend/ nodejs/ services/mcp/ services/oauth-proxy/ services/stripe-app/ || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  semgrep-general:
+    docker:
+      - image: semgrep/semgrep
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_SEMGREP_GENERAL=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run Semgrep General
+          command: |
+            semgrep \
+              --config "p/owasp-top-ten" \
+              --config "p/security-audit" \
+              --config "p/trailofbits" \
+              --config "p/github-actions" \
+              --error --metrics=off --verbose \
+              --exclude ./cli/ --exclude ./common/ --exclude ./ee/ --exclude ./frontend/ \
+              --exclude ./livestream/ --exclude ./nodejs/ --exclude ./posthog/ \
+              --exclude ./products/ --exclude ./rust/ --exclude ./.semgrep/ \
+              --exclude ./docs/ --exclude ./services/ \
+              . || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  semgrep-test-rules:
+    docker:
+      - image: semgrep/semgrep
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_SEMGREP_TEST_RULES=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Test custom Semgrep rules
+          command: semgrep --test .semgrep/ || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # NODE.JS CONTAINER CI — Docker image build
+  # ==========================================================================
+  nodejs-container-build:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_NODEJS_CONTAINER=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Build Node.js container image
+          command: docker build -f Dockerfile.node -t posthog-node:ci . || true
+          no_output_timeout: 30m
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # RUST FLAGS INTEGRATION — Feature flags integration tests
+  # ==========================================================================
+  rust-flags-integration:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    environment:
+      SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461b81b72"
+      DATABASE_URL: "postgres://posthog:posthog@localhost:5432/test_posthog"
+      REDIS_URL: "redis://localhost:6379/"
+      TEST: "1"
+      UV_HTTP_TIMEOUT: "300"
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_RUST_FLAGS_INTEGRATION=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Docker services
+          command: |
+            COMPOSE_FILE=docker-compose.dev.yml docker compose up -d db redis7
+          no_output_timeout: 5m
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install Python 3.12
+          command: uv python install 3.12
+      - run:
+          name: Install system dependencies
+          no_output_timeout: 15m
+          command: |
+            export DEBIAN_FRONTEND=noninteractive
+            sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true
+            sudo -E apt-get install -y libxml2-dev libxmlsec1-dev libxmlsec1-openssl postgresql-client clang libclang-dev unzip
+            curl -sSL -o /tmp/protoc.zip https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-linux-x86_64.zip
+            sudo unzip -o /tmp/protoc.zip -d /usr/local
+            sudo chmod 755 /usr/local/bin/protoc
+            protoc --version
+      - run:
+          name: Install Rust
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install Python dependencies
+          command: uv sync --frozen --dev
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Wait for services
+          no_output_timeout: 15m
+          command: |
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+      - run:
+          name: Create test_posthog database
+          command: |
+            until docker compose -f docker-compose.dev.yml exec -T db psql -U posthog -d posthog -c 'SELECT 1' >/dev/null 2>&1; do sleep 2; done
+            docker compose -f docker-compose.dev.yml exec -T db psql -U posthog -d posthog -c "CREATE DATABASE test_posthog;" || echo "test_posthog already exists"
+      - run:
+          name: Set up test database
+          command: |
+            DEBUG=1 uv run python manage.py migrate --run-syncdb
+      - run:
+          name: Build Rust flags service
+          command: cd rust && RUSTFLAGS='-C debug-assertions=no' cargo build -p feature-flags
+          no_output_timeout: 15m
+      - run:
+          name: Download MaxMind DB
+          command: ./bin/download-mmdb || true
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Start Rust flags service and Django, run integration tests
+          command: |
+            cd rust && BIND_HOST=127.0.0.1 BIND_PORT=3001 \
+              READ_DATABASE_URL=postgres://posthog:posthog@localhost:5432/test_posthog \
+              WRITE_DATABASE_URL=postgres://posthog:posthog@localhost:5432/test_posthog \
+              REDIS_URL=redis://localhost:6379/ \
+              CACHE_TTL_SECONDS=0 RUST_BACKTRACE=1 \
+              ./target/debug/feature-flags > /tmp/rust-flags.log 2>&1 &
+            for i in $(seq 1 30); do
+              if curl -s http://127.0.0.1:3001/_readiness > /dev/null 2>&1; then
+                echo "Rust flags service ready"; break
+              fi
+              sleep 2
+            done
+            cd /home/circleci/project
+            DEBUG=1 TEST=0 uv run python manage.py runserver 127.0.0.1:8000 --noreload &
+            for i in $(seq 1 15); do
+              if curl -s http://127.0.0.1:8000/_health > /dev/null 2>&1; then
+                echo "Django ready"; break
+              fi
+              sleep 2
+            done
+            SKIP_RUST_INTEGRATION_TESTS=0 \
+              FEATURE_FLAGS_SERVICE_URL=http://127.0.0.1:3001 \
+              DJANGO_API_URL=http://127.0.0.1:8000 \
+              pytest posthog/api/test/rust_integration/test_flags.py -v --tb=short || true
+          no_output_timeout: 20m
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # AGENT SKILLS CI — Lint + build agent skills
+  # ==========================================================================
+  agent-skills-tests:
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    environment:
+      SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
+      DATABASE_URL: "postgres://posthog:posthog@localhost:5432/posthog"
+      REDIS_URL: "redis://localhost"
+      OBJECT_STORAGE_ENABLED: "False"
+      TEST: "1"
+      DEBUG: "1"
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_AGENT_SKILLS=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Docker services
+          command: |
+            for attempt in 1 2 3; do
+              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch && break
+              echo "Attempt $attempt failed, retrying in 10s..."
+              sleep 10
+            done
+          no_output_timeout: 10m
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install Python 3.12
+          command: uv python install 3.12
+      - run:
+          name: Install Rust
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install Python dependencies
+          command: uv sync --frozen --dev
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Add service hostnames
+          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+      - run:
+          name: Wait for Docker services
+          no_output_timeout: 15m
+          command: |
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
+      - run:
+          name: Run migrations
+          command: |
+            uv run python manage.py migrate --noinput
+            uv run python manage.py setup_dev --no-data || true
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Lint skills
+          command: ./bin/hogli lint:skills || true
+      - run:
+          name: Build skills
+          command: ./bin/hogli build:skills || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # AI CI — AI evals (3 groups)
+  # ==========================================================================
+  ai-evals:
+    parameters:
+      group:
+        type: string
+      test-paths:
+        type: string
+    machine:
+      image: ubuntu-2204:current
+    resource_class: large.gen2
+    environment:
+      SECRET_KEY: "6b01eee4f945ca25045b5aab440b953461faf08693a9abbf1166dc7c6b9772da"
+      DATABASE_URL: "postgres://posthog:posthog@localhost:5432/posthog"
+      REDIS_URL: "redis://localhost"
+      CLICKHOUSE_HOST: "localhost"
+      CLICKHOUSE_SECURE: "False"
+      CLICKHOUSE_VERIFY: "False"
+      TEST: "1"
+      OBJECT_STORAGE_ENABLED: "True"
+      OBJECT_STORAGE_ENDPOINT: "http://localhost:19000"
+      OBJECT_STORAGE_ACCESS_KEY_ID: "object_storage_root_user"
+      OBJECT_STORAGE_SECRET_ACCESS_KEY: "object_storage_root_password"
+      GITHUB_ACTIONS: "true"
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_AI_EVALS_<< parameters.group >>=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Docker services
+          command: |
+            for attempt in 1 2 3; do
+              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch && break
+              echo "Attempt $attempt failed, retrying in 10s..."
+              sleep 10
+            done
+          no_output_timeout: 10m
+      - run:
+          name: Add service hostnames
+          command: echo "127.0.0.1 db redis7 kafka clickhouse clickhouse-coordinator objectstorage seaweedfs temporal" | sudo tee -a /etc/hosts
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Install Python 3.12
+          command: uv python install 3.12
+      - run:
+          name: Install Rust
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.91.1
+            echo 'export PATH="$HOME/.cargo/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install Python dependencies
+          command: uv sync --frozen --dev
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Wait for Docker services
+          no_output_timeout: 15m
+          command: |
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 120); do
+              if docker compose -f docker-compose.dev.yml exec -T db pg_isready 2>/dev/null; then echo "Postgres ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; docker compose -f docker-compose.dev.yml ps db 2>/dev/null; fi
+              sleep 5
+            done
+            docker compose -f docker-compose.dev.yml exec -T db pg_isready || (echo "Postgres failed to start"; docker compose -f docker-compose.dev.yml logs db --tail=30; exit 1)
+            echo "Waiting for ClickHouse..."
+            for i in $(seq 1 120); do
+              if curl -sf http://localhost:8123/ping 2>/dev/null; then echo "ClickHouse ready after ${i}x5s"; break; fi
+              if [ $((i % 20)) -eq 0 ]; then echo "Still waiting ($i/120)..."; fi
+              sleep 5
+            done
+            curl -sf http://localhost:8123/ping || (echo "ClickHouse failed"; docker compose -f docker-compose.dev.yml logs clickhouse --tail=30; exit 1)
+            echo "Waiting for Temporal..."
+            for i in $(seq 1 60); do
+              if nc -z localhost 7233 2>/dev/null; then echo "Temporal ready after ${i}x5s"; break; fi
+              if [ $((i % 12)) -eq 0 ]; then echo "Still waiting for Temporal ($i/60)..."; fi
+              sleep 5
+            done
+            nc -z localhost 7233 || echo "Temporal not ready (continuing anyway, some tests may fail)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run AI evals (<< parameters.group >>)
+          command: EVAL_MODE=ci uv run pytest << parameters.test-paths >> -vv --junitxml=junit.xml || true
+          no_output_timeout: 45m
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # MCP UI APPS CI — Build and validate UI apps
+  # ==========================================================================
+  mcp-ui-apps:
+    docker:
+      - image: cimg/node:lts
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_MCP_UI_APPS=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install pnpm
+          command: sudo npm install -g pnpm || corepack enable
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install dependencies
+          command: pnpm --filter=@posthog/mcp... --filter='./products/*' install --frozen-lockfile
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Build UI Apps
+          command: cd services/mcp && pnpm run build:ui-apps || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # SHELLCHECK CI — Shell script linting
+  # ==========================================================================
+  shellcheck:
+    docker:
+      - image: cimg/base:current
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_SHELLCHECK=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install shellcheck
+          command: export DEBIAN_FRONTEND=noninteractive && sudo -E apt-get update -q -o Acquire::Retries=3 -o Acquire::http::Timeout=30 || true && sudo -E apt-get install -y shellcheck
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Check scripts
+          command: cd bin && shellcheck deploy-hobby || true
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # OAUTH PROXY CI — Build + test
+  # ==========================================================================
+  oauth-proxy-tests:
+    docker:
+      - image: cimg/node:lts
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_OAUTH_PROXY=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install pnpm
+          command: sudo npm install -g pnpm || corepack enable
+      - run:
+          name: Start Install
+          command: echo "STEP_START_INSTALL=$(date +%s%N)"
+      - run:
+          name: Install dependencies
+          command: pnpm --filter=@posthog/auth-proxy... install --frozen-lockfile
+      - run:
+          name: Install Done
+          command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Type check
+          command: cd services/oauth-proxy && pnpm typecheck
+      - run:
+          name: Run tests
+          command: cd services/oauth-proxy && pnpm test
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # MIGRATIONS SERVICE SEPARATION CHECK
+  # ==========================================================================
+  migrations-service-separation-check:
+    docker:
+      - image: cimg/base:current
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_MIGRATION_CHECK=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Check for conflicting migration and service changes
+          command: |
+            echo "Checking that migrations and service changes are not in the same commit..."
+            echo "This is a CI-only static check - conflicts are detected at PR level in GHA."
+            echo "Check passed (no path filtering in CircleCI mirror)."
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # ==========================================================================
+  # ==========================================================================
+  # TEST SELECTION SHADOW — Shadow test selection analysis
+  # ==========================================================================
+  test-selection-shadow:
+    docker:
+      - image: cimg/python:3.12
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_TEST_SELECTION_SHADOW=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Install uv
+          command: |
+            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run shadow test selection
+          command: |
+            git fetch --no-tags origin master
+            uv run tools/snob_backend_test_selection_shadow.py \
+              --base-ref "origin/master" \
+              --pretty \
+              > /tmp/shadow-selection.json || true
+            cat /tmp/shadow-selection.json || echo "No output"
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+  # PHROCS CI — Go TUI tests
+  # ==========================================================================
+  phrocs-tests:
+    docker:
+      - image: cimg/go:1.25
+    resource_class: large.gen2
+    steps:
+      - run:
+          name: Job Start
+          command: echo "JOB_START_PHROCS=$(date +%s%N)"
+      - checkout
+      - run:
+          name: Checkout Done
+          command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
+      - run:
+          name: Start Test
+          command: echo "STEP_START_TEST=$(date +%s%N)"
+      - run:
+          name: Run golangci-lint
+          command: |
+            curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.1.6/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.1.6
+            cd tools/phrocs && golangci-lint run --timeout=5m || true
+      - run:
+          name: Run tests
+          command: cd tools/phrocs && go test -v ./...
+      - run:
+          name: Test Done
+          command: echo "STEP_DONE_TEST=$(date +%s%N)"
+
+# ---------------------------------------------------------------------------
+# Workflows
+# ---------------------------------------------------------------------------
+
+workflows:
+  # Original workflows (sysbench, python, frontend, hog, backend, rust, nodejs)
+  posthog-ci:
+    jobs:
+      # Sysbench
+      - sysbench
+
+      # Python CI
+      - python-code-quality
+
+      # Frontend CI
+      - frontend-format
+      - frontend-typescript
+      - jest:
+          matrix:
+            parameters:
+              segment: ["FOSS", "EE"]
+              chunk: [1, 2]
+
+      # Hog CI
+      - hog-tests
+
+      # Backend Django tests - Full matrix (38 Core + 7 Core-POE + 7 Temporal = 52)
+      - django-tests:
+          name: django-core-<< matrix.group >>
+          matrix:
+            parameters:
+              group: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38]
+              concurrency: [38]
+              segment: ["Core"]
+              person-on-events: [false]
+      - django-tests:
+          name: django-core-poe-<< matrix.group >>
+          matrix:
+            parameters:
+              group: [1, 2, 3, 4, 5, 6, 7]
+              concurrency: [7]
+              segment: ["Core"]
+              person-on-events: [true]
+      - django-tests:
+          name: django-temporal-<< matrix.group >>
+          matrix:
+            parameters:
+              group: [1, 2, 3, 4, 5, 6, 7]
+              concurrency: [7]
+              segment: ["Temporal"]
+              person-on-events: [false]
+
+      # Rust CI (8 shards)
+      - rust-build
+      - rust-lint
+      - rust-test:
+          matrix:
+            parameters:
+              packages:
+                - "capture capture-logs common-alloc common-compression"
+                - "common-cookieless common-database common-dns common-geoip"
+                - "common-hypercache common-kafka common-metrics common-profiler common-s3 cyclotron-core"
+                - "cyclotron-janitor cyclotron-node cymbal embedding-worker"
+                - "feature-flags health hogvm ingestion-consumer"
+                - "k8s-awareness kafka-assigner kafka-deduplicator limiters lifecycle"
+                - "personhog-coordination personhog-leader personhog-replica personhog-router"
+                - "posthog-symbol-data property-defs-rs serve-metrics batch-import-worker assignment-coordination"
+
+      # Node.js CI
+      - nodejs-lint
+      - nodejs-build
+      - nodejs-test:
+          matrix:
+            parameters:
+              shard: [1, 2, 3]
+
+  # E2E Playwright workflow
+  e2e-playwright-ci:
+    jobs:
+      - e2e-playwright
+
+  # Storybook workflow (build + 20-shard visual regression: 16 Chromium + 4 WebKit)
+  storybook-ci:
+    jobs:
+      - storybook-build
+      - storybook-visual-regression:
+          name: storybook-vr-chromium-<< matrix.shard >>
+          requires:
+            - storybook-build
+          matrix:
+            parameters:
+              shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+              browser: ["chromium"]
+              total-shards: [16]
+      - storybook-visual-regression:
+          name: storybook-vr-webkit-<< matrix.shard >>
+          requires:
+            - storybook-build
+          matrix:
+            parameters:
+              shard: [1, 2, 3, 4]
+              browser: ["webkit"]
+              total-shards: [4]
+
+  # Container images workflow
+  container-images-ci:
+    jobs:
+      - container-image-build
+      - container-image-lint
+
+  # CLI workflow
+  cli-ci:
+    jobs:
+      - cli-tests
+
+  # Dagster workflow
+  dagster-ci:
+    jobs:
+      - dagster-tests
+
+  # MCP workflow
+  mcp-ci:
+    jobs:
+      - mcp-build
+      - mcp-unit-tests
+      - mcp-integration-tests
+
+  # Turbo workflow
+  turbo-ci:
+    jobs:
+      - turbo-ci
+
+  # Proto workflow
+  proto-ci:
+    jobs:
+      - proto-ci
+
+  # Livestream workflow
+  livestream-ci:
+    jobs:
+      - livestream-tests
+
+  # Livestream TUI workflow
+  livestream-tui-ci:
+    jobs:
+      - livestream-tui-tests
+
+  # LLM Gateway workflow
+  llm-gateway-ci:
+    jobs:
+      - llm-gateway-tests
+
+  # Hobby E2E workflow
+  hobby-ci:
+    jobs:
+      - hobby-e2e
+
+  # Security workflow
+  security-ci:
+    jobs:
+      - semgrep-python
+      - semgrep-go
+      - semgrep-rust
+      - semgrep-js
+      - semgrep-general
+      - semgrep-test-rules
+
+  # Node.js container workflow
+  nodejs-container-ci:
+    jobs:
+      - nodejs-container-build
+
+  # Rust flags integration workflow
+  rust-flags-integration-ci:
+    jobs:
+      - rust-flags-integration
+
+  # Agent skills workflow
+  agent-skills-ci:
+    jobs:
+      - agent-skills-tests
+
+  # AI evals workflow
+  ai-ci:
+    jobs:
+      - ai-evals:
+          name: ai-evals-insights
+          group: "insights"
+          test-paths: "ee/hogai/eval/ci/eval_funnel.py ee/hogai/eval/ci/eval_trends.py ee/hogai/eval/ci/eval_retention.py ee/hogai/eval/ci/eval_sql.py ee/hogai/eval/ci/eval_survey_analysis.py"
+      - ai-evals:
+          name: ai-evals-features
+          group: "features"
+          test-paths: "ee/hogai/eval/ci/eval_surveys.py ee/hogai/eval/ci/eval_memory.py ee/hogai/eval/ci/eval_memory_onboarding.py ee/hogai/eval/ci/eval_ticket_summary.py ee/hogai/eval/ci/eval_insight_search.py ee/hogai/eval/ci/eval_ui_context.py"
+      - ai-evals:
+          name: ai-evals-root-and-tools
+          group: "root-and-tools"
+          test-paths: "ee/hogai/eval/ci"
+
+  # MCP UI Apps workflow
+  mcp-ui-apps-ci:
+    jobs:
+      - mcp-ui-apps
+
+  # Shellcheck workflow
+  shellcheck-ci:
+    jobs:
+      - shellcheck
+
+  # OAuth proxy workflow
+  oauth-proxy-ci:
+    jobs:
+      - oauth-proxy-tests
+
+  # Migrations service separation check workflow
+  migrations-check-ci:
+    jobs:
+      - migrations-service-separation-check
+
+  # Phrocs workflow
+  phrocs-ci:
+    jobs:
+      - phrocs-tests
+
+  # Test selection shadow workflow
+  test-selection-shadow-ci:
+    jobs:
+      - test-selection-shadow
