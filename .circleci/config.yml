@@ -111,7 +111,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install SAML dependencies
@@ -327,7 +327,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install SAML dependencies
@@ -430,7 +430,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install Python 3.12
@@ -454,7 +454,7 @@ jobs:
           name: Install sqlx-cli (used by tests at runtime)
           command: |
             if [ ! -x "$HOME/.cargo/bin/sqlx" ]; then
-              cargo install sqlx-cli --version 0.8.3 --no-default-features --features native-tls,postgres
+              cargo install sqlx-cli --locked --version 0.8.3 --no-default-features --features native-tls,postgres
             else
               echo "sqlx already installed: $($HOME/.cargo/bin/sqlx --version)"
             fi
@@ -744,7 +744,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install Python 3.12
@@ -997,7 +997,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install Python 3.12
@@ -1038,7 +1038,7 @@ jobs:
           name: Install sqlx-cli (used by setup:test:rust migrate-entry)
           command: |
             if [ ! -x "$HOME/.cargo/bin/sqlx" ]; then
-              cargo install sqlx-cli --version 0.8.3 --no-default-features --features native-tls,postgres
+              cargo install sqlx-cli --locked --version 0.8.3 --no-default-features --features native-tls,postgres
             else
               echo "sqlx already installed: $($HOME/.cargo/bin/sqlx --version)"
             fi
@@ -1196,7 +1196,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install Python 3.12
@@ -1276,7 +1276,7 @@ jobs:
           name: Install sqlx-cli (for persons-db Rust migrations)
           command: |
             if [ ! -x "$HOME/.cargo/bin/sqlx" ]; then
-              cargo install sqlx-cli --version 0.8.3 --no-default-features --features native-tls,postgres
+              cargo install sqlx-cli --locked --version 0.8.3 --no-default-features --features native-tls,postgres
             fi
       - run:
           name: Create test databases and run migrations
@@ -1585,7 +1585,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install Python 3.12
@@ -1677,7 +1677,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install Python dependencies
@@ -1798,7 +1798,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install Python 3.12
@@ -1909,7 +1909,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install SAML dependencies
@@ -2068,7 +2068,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Start Install
@@ -2109,7 +2109,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Start Test
@@ -2351,7 +2351,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install Python 3.12
@@ -2477,7 +2477,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install Python 3.12
@@ -2590,7 +2590,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Install Python 3.12
@@ -2797,7 +2797,7 @@ jobs:
       - run:
           name: Install uv
           command: |
-            curl -LsSf https://astral.sh/uv/0.10.2/install.sh | sh
+            curl -LsSf https://astral.sh/uv/0.11.28/install.sh | sh
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$BASH_ENV"
       - run:
           name: Start Test
