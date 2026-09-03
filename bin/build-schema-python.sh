@@ -3,7 +3,7 @@
 set -e
 
 # Generate schema.py from schema.json
-datamodel-codegen \
+uv run datamodel-codegen \
     --class-name='SchemaRoot' --collapse-root-models --target-python-version 3.12 --disable-timestamp \
     --use-one-literal-as-default --use-default --use-default-kwarg --use-subclass-enum \
     --use-union-operator --use-standard-collections \
@@ -14,14 +14,14 @@ datamodel-codegen \
     --wrap-string-literal
 
 # Re-apply discriminator keywords to array items dropped by datamodel-code-generator
-python3 bin/patch-schema-array-discriminators.py
+uv run python bin/patch-schema-array-discriminators.py
 
 # Route the AnyPropertyFilter union on `type` via a legacy-tolerant callable discriminator
-python3 bin/patch-schema-property-filter-discriminator.py
+uv run python bin/patch-schema-property-filter-discriminator.py
 
 # Move enum classes to posthog/schema_enums.py (importable without the pydantic model cost)
-python3 bin/split-schema-enums.py
+uv run python bin/split-schema-enums.py
 
 # Format and lint
-ruff format posthog/schema.py posthog/schema_enums.py
-ruff check --fix posthog/schema.py posthog/schema_enums.py
+uv run ruff format posthog/schema.py posthog/schema_enums.py
+uv run ruff check --fix posthog/schema.py posthog/schema_enums.py

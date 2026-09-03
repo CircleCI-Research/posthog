@@ -569,7 +569,20 @@ jobs:
             - setup-uv
             - run:
                   name: Fetch deleted migration paths
-                  command: .github/scripts/list-removed-renamed-paths.sh > /tmp/deleted-migration-paths.txt
+                  command: |
+                      export REPO="${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}"
+                      # CIRCLE_PR_NUMBER is only set for forked PRs; extract from the URL otherwise.
+                      _pr="${CIRCLE_PR_NUMBER:-}"
+                      if [ -z "$_pr" ] && [ -n "${CIRCLE_PULL_REQUEST:-}" ]; then
+                          _pr="$(echo "$CIRCLE_PULL_REQUEST" | grep -oE '[0-9]+$')"
+                      fi
+                      if [ -z "$_pr" ]; then
+                          echo "No PR number available; skipping deleted-migration-path fetch"
+                          touch /tmp/deleted-migration-paths.txt
+                      else
+                          PR_NUMBER="$_pr" REPO="$REPO" \
+                              .github/scripts/list-removed-renamed-paths.sh > /tmp/deleted-migration-paths.txt
+                      fi
             - run:
                   name: Check deleted migrations
                   command: ./bin/hogli lint:migration-deletions < /tmp/deleted-migration-paths.txt
