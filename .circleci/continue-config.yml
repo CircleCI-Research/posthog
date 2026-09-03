@@ -391,6 +391,7 @@ commands:
                   steps:
                       - run:
                             name: Run semgrep (severity << parameters.severity >>)
+                            no_output_timeout: 30m
                             command: |
                                 docker run --rm -v "$PWD:/src" -w /src \
                                     -e SEMGREP_ENABLE_VERSION_CHECK=false \
@@ -401,6 +402,7 @@ commands:
                   steps:
                       - run:
                             name: Run semgrep
+                            no_output_timeout: 30m
                             command: |
                                 docker run --rm -v "$PWD:/src" -w /src \
                                     -e SEMGREP_ENABLE_VERSION_CHECK=false \
