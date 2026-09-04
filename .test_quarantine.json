@@ -7,8 +7,8 @@
             "reason": "A sticky bottom-right 'support widget unavailable' toast (autoClose: false, always present in E2E) intercepts clicks on the insight panel's lowest actions; fails on master and gates every PR, unrelated to data warehouse sources",
             "owner": "@team-product-analytics",
             "issue": "https://github.com/PostHog/posthog/pull/82398",
-            "added": "2026-08-13",
-            "expires": "2026-08-20",
+            "added": "2026-09-04",
+            "expires": "2026-10-04",
             "mode": "run"
         },
         {
@@ -17,8 +17,8 @@
             "reason": "A sticky bottom-right 'support widget unavailable' toast (autoClose: false, always present in E2E) intercepts clicks on the insight panel's lowest actions; fails on master and gates every PR, unrelated to data warehouse sources",
             "owner": "@team-product-analytics",
             "issue": "https://github.com/PostHog/posthog/pull/82398",
-            "added": "2026-08-13",
-            "expires": "2026-08-20",
+            "added": "2026-09-04",
+            "expires": "2026-10-04",
             "mode": "run"
         },
         {
@@ -27,8 +27,8 @@
             "reason": "Fails deterministically in the Core shard-5 CI split (assert not Integration.objects.filter(team=self.team, kind='github').exists()); reproduced identically across two separate CI runs of this PR, before and after merging in new master commits. The Reverb data-warehouse source added by this PR does not touch GitHub integration code, callback routing, or this test file, so this is a pre-existing issue unrelated to this change; fails on master and gates every PR that lands in this shard.",
             "owner": "@team-devex",
             "issue": "https://github.com/PostHog/posthog/pull/84436",
-            "added": "2026-08-19",
-            "expires": "2026-09-02",
+            "added": "2026-09-04",
+            "expires": "2026-10-04",
             "mode": "run"
         },
         {
@@ -36,9 +36,63 @@
             "runner": "playwright",
             "reason": "Ingested screenshot does not reach a phaiblob:// pointer before the poll window ends, so the assertion sees the raw value; fails on master and gates every PR",
             "owner": "@team-ai-observability",
-            "added": "2026-08-10",
-            "expires": "2026-08-17",
+            "added": "2026-09-04",
+            "expires": "2026-10-04",
             "mode": "run"
+        },
+        {
+            "id": "posthog/management/commands/test/test_persons_dedup.py::TestPersonsDedupLogVisibility::test_info_records_survive_the_posthog_logger_clamp",
+            "runner": "pytest",
+            "mode": "run",
+            "reason": "Asserts INFO records survive the posthog logger clamp; fails at this pinned commit (1 failed, 455 passed in Core shard 16). Benchmark fork -- quarantined to keep the pipeline interpretable, not to hide a regression.",
+            "owner": "@circleci-research",
+            "added": "2026-09-04",
+            "expires": "2026-10-04"
+        },
+        {
+            "id": "posthog/hogql_queries/ai/test/test_ai_table_resolver.py::TestQueryAiEvents",
+            "runner": "pytest",
+            "mode": "skip",
+            "reason": "Four tests raise 'Database access not allowed, use the django_db mark' in Core shard 37. Shard-order dependent rather than deterministic, so skipped: xfail does not tolerate errors raised during fixture setup.",
+            "owner": "@circleci-research",
+            "added": "2026-09-04",
+            "expires": "2026-10-04"
+        },
+        {
+            "id": "ee/clickhouse/models/test/test_property.py::test_session_property_validation",
+            "runner": "pytest",
+            "mode": "skip",
+            "reason": "Same 'Database access not allowed' class, Core shard 38.",
+            "owner": "@circleci-research",
+            "added": "2026-09-04",
+            "expires": "2026-10-04"
+        },
+        {
+            "id": "ee/clickhouse/test/test_error.py::test_per_query_memory_limit_phrasing_matches_real_clickhouse",
+            "runner": "pytest",
+            "mode": "skip",
+            "reason": "CHQueryErrorUnknownDatabase code 81 -- the shard's ClickHouse test database is absent.",
+            "owner": "@circleci-research",
+            "added": "2026-09-04",
+            "expires": "2026-10-04"
+        },
+        {
+            "id": "products/mcp_analytics/frontend/timeBuckets.test.ts",
+            "runner": "jest",
+            "mode": "run",
+            "reason": "resolveInterval expects 'day' for a -7d window and gets 'month'. Wall-clock dependent: a 7-day window from early September crosses a month boundary, so this decays as the pinned commit ages.",
+            "owner": "@circleci-research",
+            "added": "2026-09-04",
+            "expires": "2026-10-04"
+        },
+        {
+            "id": "packages/quill/packages/charts/src/components/Legend/ChartLegendLayout.test.tsx",
+            "runner": "jest",
+            "mode": "skip",
+            "reason": "Reports 'Test suite failed to run' -- an import-time failure, so mode run cannot help: jest never declares the tests. File-scoped skip is required because jest decides skips during collection.",
+            "owner": "@circleci-research",
+            "added": "2026-09-04",
+            "expires": "2026-10-04"
         }
     ]
 }
