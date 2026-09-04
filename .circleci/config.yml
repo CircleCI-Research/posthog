@@ -215,7 +215,7 @@ jobs:
   frontend-typescript:
     docker:
       - image: cimg/node:lts
-    resource_class: large.gen2
+    resource_class: 2xlarge
     environment:
       NODE_OPTIONS: "--max-old-space-size=16384"
     steps:
@@ -986,10 +986,10 @@ jobs:
           name: Checkout Done
           command: echo "STEP_DONE_CHECKOUT=$(date +%s%N)"
       - run:
-          name: Start Docker services (with localstack + maildev for KMS/email tests)
+          name: Start Docker services (with maildev for email tests)
           command: |
             for attempt in 1 2 3; do
-              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure,dev_tools,localstack docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch localstack maildev && break
+              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure,dev_tools docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch maildev && break
               echo "Attempt $attempt failed, retrying in 10s..."
               sleep 10
             done
@@ -2075,7 +2075,7 @@ jobs:
           command: echo "STEP_START_INSTALL=$(date +%s%N)"
       - run:
           name: Install dependencies
-          command: cd services/llm-gateway && uv sync --frozen --dev
+          command: cd services/llm-gateway && uv sync --frozen --dev --python 3.13
       - run:
           name: Install Done
           command: echo "STEP_DONE_INSTALL=$(date +%s%N)"
