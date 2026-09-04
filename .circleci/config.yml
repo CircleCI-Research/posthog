@@ -97,7 +97,7 @@ jobs:
   python-code-quality:
     docker:
       - image: cimg/python:3.12
-    resource_class: large.gen2
+    resource_class: xlarge
     environment:
       UV_HTTP_TIMEOUT: "120"
     steps:
@@ -989,7 +989,7 @@ jobs:
           name: Start Docker services (with maildev for email tests)
           command: |
             for attempt in 1 2 3; do
-              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure,dev_tools docker compose up -d db redis7 clickhouse zookeeper kafka objectstorage temporal elasticsearch maildev && break
+              COMPOSE_FILE=docker-compose.dev.yml:docker-compose.profiles.yml COMPOSE_PROFILES=temporal,azure,dev_tools docker compose up -d db redis7 valkey-cluster clickhouse zookeeper kafka objectstorage temporal elasticsearch maildev && break
               echo "Attempt $attempt failed, retrying in 10s..."
               sleep 10
             done
