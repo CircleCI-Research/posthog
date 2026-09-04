@@ -93,6 +93,15 @@
             "owner": "@circleci-research",
             "added": "2026-09-04",
             "expires": "2026-10-04"
+        },
+        {
+            "id": "posthog/models/usage_report_events_preagg/test/test_usage_report_events_preagg_mv.py::TestUsageReportEventsPreaggMV",
+            "runner": "pytest",
+            "mode": "skip",
+            "owner": "@circleci-research",
+            "added": "2026-09-04",
+            "expires": "2026-10-04",
+            "reason": "Two tests raise CHQueryErrorUnknownDatabase code 81 at setup in Core shard 37 -- the shard's ClickHouse test database is absent. Errors at setup, so skip is required: xfail tolerates failures in the test body, not fixture setup. Surfaced only once the TestQueryAiEvents failures in the same shard were quarantined."
         }
     ]
 }
